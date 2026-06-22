@@ -143,4 +143,4 @@
   } catch (e) {
     console.error('Error checking for CN user:', e)
   }
-})()
+})();
