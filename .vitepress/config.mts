@@ -70,7 +70,6 @@ const zhSidebar = [
       { text: "重置密码", link: "/faq/chpasswd" },
       { text: "强制取消 2FA", link: "/faq/disable2fa" },
       { text: "强制允许密码登录", link: "/faq/permit-login" },
-      { text: "集成 Cloudflared", link: "/faq/cloudflared" },
       { text: "卸载 Agent", link: "/faq/uninstall" },
       { text: "无 root 运行 Agent", link: "/faq/agent-no-root" },
       { text: "通过 HTTP 接口上报信息", link: "/faq/upload-via-http" },
@@ -86,10 +85,6 @@ const zhSidebar = [
     text: "社区文档",
     items: [
       { text: "使用 GitHub 进行单点登录", link: "/faq/oauth-github" },
-      {
-        text: "使用 Cloudflare Access 登录",
-        link: "/community/cloudflare_access",
-      },
       { text: "将节点 IP 同步到 Git", link: "/community/git-sync" },
       { text: "利用 Gmail 发送通知", link: "/community/smtp_gmail" },
       { text: "NAS 中运行 Agent", link: "/faq/agent-nas" },
@@ -135,7 +130,6 @@ const enSidebar = [
       { text: "Reset Password", link: "/en/faq/chpasswd" },
       { text: "Disable 2FA", link: "/en/faq/disable2fa" },
       { text: "Allow Password Login", link: "/en/faq/permit-login" },
-      { text: "Cloudflared", link: "/en/faq/cloudflared" },
       { text: "Uninstall Agent", link: "/en/faq/uninstall" },
       { text: "Run Agent without Root", link: "/en/faq/agent-no-root" },
       { text: "Upload via HTTP", link: "/en/faq/upload-via-http" },
@@ -153,10 +147,6 @@ const enSidebar = [
     text: "Community Guides",
     items: [
       { text: "GitHub OAuth Login", link: "/en/faq/oauth-github" },
-      {
-        text: "Cloudflare Access Login",
-        link: "/en/community/cloudflare_access",
-      },
       { text: "Sync Node IPs to Git", link: "/en/community/git-sync" },
       {
         text: "Send Notifications with Gmail",
