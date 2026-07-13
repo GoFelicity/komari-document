@@ -107,7 +107,7 @@
 
 ![Naive Theme Preview](https://gh.dpik.top/https://raw.githubusercontent.com/lyimoexiao/komari-theme-naive/master/docs/preview.png)
 
-## 下一页
+## Next
 
 > 项目地址：[Github](https://github.com/tonyliuzj/komari-next)
 >
