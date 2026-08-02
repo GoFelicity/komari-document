@@ -10,13 +10,16 @@ const server = require("server");
 | 方法 | 说明 | 权限 |
 | --- | --- | --- |
 | [`server.route(method, path, handler)`](#server-route) | 在宿主引擎注册 HTTP 路由 | `allowRoutes` |
-| [`server.hook(kind, fn)`](#server-hook) | 注册请求/响应钩子 | `allowHooks` |
+| [`server.static(path, dir, opts)`](#server-static) | 挂载插件目录内的静态文件夹，可选 SPA 回退 | `allowRoutes` |
+| [`server.hook(kind, matcher?, fn)`](#server-hook) | 注册请求/响应钩子 | `allowHooks` |
+| [`server.injectHTML(head, body)`](#server-injecthtml) | 向每个 HTML 页面嵌入 CSS/JS | `allowHTMLInject` |
 | [`server.call(method, params...)`](#server-call) | 以管理员身份调用系统 RPC | `allowSystemRPC` |
 | [`server.registerRPC(method, handler)`](#server-registerrpc) | 注册插件自己的 RPC 方法 | 始终授予 |
+| [`server.cron(expr, handler)`](#server-cron) | 按 cron 表达式定时执行 handler | 始终授予 |
 | [`server.getConfig()`](#server-getconfig) | 读取配置（合并默认值） | 始终授予 |
 
-`allowRoutes` / `allowHooks` 缺失时在**加载时**抛 `TypeError`（插件加载失败）；
-`allowSystemRPC` 缺失时 `server.call` 返回被拒绝的 Promise。
+`allowRoutes` / `allowHooks` / `allowHTMLInject` 缺失时在**加载时**抛 `TypeError`
+（插件加载失败）；`allowSystemRPC` 缺失时 `server.call` 返回被拒绝的 Promise。
 
 ## 生命周期钩子
 
@@ -126,17 +129,42 @@ server.route("GET", "/stream", async (req, res) => {
   即结束）。
 - 流式空闲超过 `timeout` 也会触发中止并关闭流。
 
+## server.static
+
+将插件目录内的一个**静态文件夹**挂载到指定路径，无需为每个文件编写处理器：
+
+```js
+server.static("/ui", "dist");
+server.static("/app", "dist", { spa: true }); // SPA 模式
+```
+
+| 参数 | 类型 | 说明 |
+| --- | --- | --- |
+| `path` | string | 挂载路径，必须以 `/` 开头，不能是 `/`；结尾的 `/` 会被忽略 |
+| `dir` | string | 插件目录内的相对文件夹（如 `"dist"`），必须存在 |
+| `opts` | object | 可选；`{ spa: true }` 开启 SPA 回退 |
+
+- 需要 `allowRoutes` 权限，否则加载时抛 `TypeError`。
+- 支持 `GET` 与 `HEAD` 请求：`path` 本身返回目录下的 `index.html`，子路径返回
+  对应文件；请求目录时回退到该目录内的 `index.html`。
+- `spa: true` 时，**找不到文件**的请求回退到文件夹根的 `index.html`（前端路由
+  刷新不再 404）；真实存在的文件仍然优先。
+- 路径穿越（`..`）请求一律 404，文件解析被限定在 `dir` 内。
+- 与 `server.route` 相同：挂载槽位在卸载后保留（返回 404），重新加载后恢复；
+  同一次加载内重复挂载同一路径以最新参数为准。
+
 ## server.hook
 
-在宿主的 HTTP 链上注册**请求钩子**或**响应钩子**，影响进入/离开服务端的**所有**
-HTTP 请求（WebSocket 升级请求除外，它们直接穿透）：
+在宿主的 HTTP 链上注册**请求钩子**或**响应钩子**。默认影响进入/离开服务端的**所有**
+HTTP 请求（WebSocket 升级请求除外，它们直接穿透）；传入可选的路径过滤后只影响
+匹配的请求（不匹配的请求完全跳过钩子链，不做 body 缓冲）：
 
 ```js
 server.hook("request", (req) => {
   req.headers["x-hooked"] = "yes";
 });
 
-server.hook("response", (req, res) => {
+server.hook("response", "/api/*", (req, res) => {
   res.statusCode = 201;
   res.body = res.body + "|hooked";
 });
@@ -145,6 +173,7 @@ server.hook("response", (req, res) => {
 | 参数 | 类型 | 说明 |
 | --- | --- | --- |
 | `kind` | `"request"` \| `"response"` | 钩子类型 |
+| `matcher` | string（可选） | 路径过滤：`"/api/foo"`（精确）、`"/api/*"`（子树）、`"POST /api/foo"`（方法 + 路径）；大小写不敏感 |
 | `fn` | function | 请求钩子 `fn(req)`；响应钩子 `fn(req, res)` |
 
 需要 `allowHooks` 权限，否则加载时抛 `TypeError`。
@@ -162,7 +191,8 @@ server.hook("response", (req, res) => {
 }
 ```
 
-- 请求体读取上限 32 MiB（`maxHTTPBodyBytes`）。
+- 请求体读取上限取匹配钩子所属插件声明的 `maxHTTPBodyBytes`（未声明时默认
+  32 MiB）；超过上限的请求返回 `413`。
 - 多个钩子按注册顺序依次执行；钩子抛错 → 客户端收到 `500 plugin request hook failed`，
   剩余钩子不再执行。
 - 钩子执行受 `timeout` 限制，超时同样视为失败。
@@ -179,9 +209,39 @@ server.hook("response", (req, res) => {
 ```
 
 - 响应默认被缓冲（上限 32 MiB）以便钩子改写。
+- **改写 body 后原响应携带的 `Content-Length` 会被移除**，由 Go 重新计算长度
+  （或回退到分块传输），避免客户端截断/挂起。
 - **流式响应（SSE 等，第一次 `Flush()`）或超过 32 MiB 的响应直接穿透**，
   钩子无法再改写（有日志记录）。
 - 钩子错误仅记录日志，不阻断响应。
+
+## server.injectHTML
+
+向**每个** `text/html` 响应嵌入自定义 CSS/JS：`head` 片段插入 `</head>` 之前，
+`body` 片段插入 `</body>` 之前（大小写不敏感；无 `</head>` 时 `head` 置于文档开头，
+无 `</body>` 时 `body` 追加到末尾）：
+
+```js
+server.injectHTML(
+  "<style>.plugin-badge{color:red}</style>",
+  '<script src="/api/mjpeg_live.js"></script>'
+);
+```
+
+| 参数 | 类型 | 说明 |
+| --- | --- | --- |
+| `head` | string | 嵌入 `<head>` 的 HTML（样式表、`<style>`、`<meta>` 等），可为空串 |
+| `body` | string | 嵌入 `<body>` 的 HTML（`<script>` 等），可为空串 |
+
+- 作用于**全部** HTML 页面，包括 `/admin` 管理页、`/terminal` 终端页、登录页、
+  公共页与插件 iframe 页（这些页面不受站点设置的 custom_head/custom_body 影响）。
+- **非 HTML 响应不嵌入**：JSON、图片、字体、MJPEG/SSE 流等保持原样直通，不缓冲、
+  不修改。
+- 注入运行在插件响应钩子**之后**，看到的是钩子改写后的最终 HTML。
+- 单次响应超过 32 MiB、流式响应（第一次 `Flush()`）或 WebSocket 升级请求直接
+  穿透，不注入。
+- 多个插件按注册顺序依次累加注入；卸载插件后其注入片段自动移除。
+- 需要 `allowHTMLInject` 权限，否则加载时抛 `TypeError`。
 
 ## server.call
 
@@ -239,6 +299,30 @@ server.registerRPC("plugin:fail", () => {
 - 处理器在插件事件循环上执行；抛出的 JS `Error` 映射为 JSON-RPC 错误
   （`err.code` / `err.message` / `err.data` 会被传递）。
 - 建议使用 `plugin:<名称>:<动作>` 命名，避免与系统方法冲突。
+
+## server.cron
+
+按 cron 表达式在插件事件循环上定时执行 handler：
+
+```js
+server.cron("0 0 9 * * *", async () => {
+  // 每天早上 9 点运行
+});
+
+server.cron("@every 1m", () => {
+  // 每分钟运行一次
+});
+```
+
+| 参数 | 说明 |
+| --- | --- |
+| `expr` | cron 表达式：5 字段（分 时 日 月 周）、6 字段（秒 分 时 日 月 周）或 `@every <duration>`（如 `@every 1m`、`@every 30s`）；字段支持 `*`、`*/n`、`a-b`、逗号列表 |
+| `handler` | `() => void`，每次触发时在插件事件循环上执行 |
+
+- **始终授予**，无需权限声明。
+- 非法表达式使加载失败（错误写入 `last_error`，插件自动禁用）。
+- 同一加载内可注册多个任务；卸载或加载失败时全部自动移除。
+- handler 抛出的错误记录到插件日志，不影响后续触发。
 
 ## server.getConfig
 

@@ -9,7 +9,7 @@ validates this file on install, load, and enable.
 | Field | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
 | `name` | string \| i18n object | Yes | — | Plugin name. An empty string or empty map fails validation |
-| `short` | string | Yes | — | Unique plugin short name, also used as the directory name under `data/plugin`. Only `[A-Za-z0-9_-]`, must not be `default` |
+| `short` | string | Yes | — | Unique plugin short name, also used as the directory name under `data/plugin` and `data/plugin-data` (long-term storage). Only `[A-Za-z0-9_-]`, must not be `default` |
 | `description` | string \| i18n object | No | — | Plugin description |
 | `author` | string \| i18n object | No | — | Author |
 | `version` | string | No | — | Plugin version (required for market publishing) |
@@ -54,6 +54,7 @@ defaults to `false`/`0` — **nothing is granted unless declared**.
 | `allowSystemRPC` | boolean | `false` | Allow `server.call` to invoke system RPC with admin authority | **Yes** |
 | `allowRoutes` | boolean | `false` | Allow `server.route` to register HTTP routes on the host engine | **Yes** |
 | `allowHooks` | boolean | `false` | Allow `server.hook` to modify HTTP requests/responses | **Yes** |
+| `allowHTMLInject` | boolean | `false` | Allow `server.injectHTML` to embed CSS/JS into every HTML page | **Yes** |
 | `allowExec` | boolean | `false` | Allow `child_process` to execute child processes | **Yes** |
 | `allowListen` | boolean | `false` | Allow `net`/`http` Servers to listen on local ports | **Yes** |
 | `allowAllFileAccess` | boolean | `false` | Allow accessing files outside the plugin directory | **Yes** |
@@ -68,11 +69,11 @@ triggered.
 :::
 
 ::: warning Approval mechanism
-When any of `allowSystemRPC` / `allowRoutes` / `allowHooks` / `allowExec` /
-`allowListen` / `allowAllFileAccess` is `true`, enabling the plugin requires admin
-approval. The approval hash covers only these 6 fields; later changes to `node`,
-timeout, or size limits do **not** re-trigger approval, but changing a sensitive
-capability does.
+When any of `allowSystemRPC` / `allowRoutes` / `allowHooks` / `allowHTMLInject` /
+`allowExec` / `allowListen` / `allowAllFileAccess` is `true`, enabling the plugin
+requires admin approval. The approval hash covers only these 7 fields; later changes
+to `node`, timeout, or size limits do **not** re-trigger approval, but changing a
+sensitive capability does.
 :::
 
 ## Configuration

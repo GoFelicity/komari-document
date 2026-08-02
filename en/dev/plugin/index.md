@@ -19,18 +19,126 @@ plugins.
 | Capability | API | Required permission | Notes |
 | --- | --- | --- | --- |
 | Register RPC methods | `server.registerRPC` | always granted | Register `plugin:xxx` methods callable by the UI or other plugins |
+| Schedule periodic tasks | `server.cron` | always granted | Run a handler on the plugin event loop on a cron schedule |
 | Call system RPC | `server.call` | `allowSystemRPC` | Invoke any registered RPC method with admin authority |
 | Register HTTP routes | `server.route` | `allowRoutes` | Register `METHOD /path` on the host engine; supports streaming |
+| Mount a static folder | `server.static` | `allowRoutes` | Serve a folder from the plugin directory on the host engine; optional SPA fallback (`{ spa: true }`) |
 | Intercept HTTP requests/responses | `server.hook` | `allowHooks` | Modify every HTTP request/response entering or leaving the server |
+| Embed CSS/JS into every page | `server.injectHTML` | `allowHTMLInject` | Embed head/body fragments into every HTML response (incl. admin and terminal pages) |
 | Read plugin configuration | `server.getConfig` | always granted | Read saved configuration merged with manifest defaults |
 | Declare configuration items | manifest `configuration` | no permission | Admin UI generates a config form automatically |
 | Inject admin pages | manifest `pages` | no permission | Show iframe / redirect pages in the admin sidebar |
-| File access | `fs` / `require` | inside plugin dir: always granted | Sandboxed to the plugin directory; escaping requires `allowAllFileAccess` |
+| File access | `fs` / `require` | inside plugin dir and storage dir: always granted | Sandboxed to the plugin directory and `__storageDir__` (`data/plugin-data/<short>`); escaping requires `allowAllFileAccess` |
 | Node compatibility modules | `node` modules | `node` | events/fs/path/os/process/net/http/crypto, etc. |
 | Child processes | `child_process` | `allowExec` | Execute external commands |
 | Port listening | `net`/`http` Server | `allowListen` | Bind local ports (default `127.0.0.1`) |
 
-## Quick Start
+## Quick Start with the SDK
+
+The recommended workflow uses the published SDK packages and `create-komari-plugin`.
+It provides TypeScript types, VS Code completion, manifest hover documentation, a
+local build, and a watch mode that uploads and reloads the plugin automatically.
+
+### Prerequisites
+
+- Node.js 20 or later
+- A reachable Komari development server
+- An API key with permission to install and manage plugins
+- VS Code with the generated project opened as the workspace root
+
+Keep the development server and API key private. The initializer stores them in
+`komari.local.json`, which is added to `.gitignore` by default.
+
+### Create a project
+
+Run the initializer from the directory where the project should be created:
+
+```sh
+npm create komari-plugin hello
+```
+
+It prompts for the development server URL and API key. For scripted setup, pass
+the values explicitly:
+
+```sh
+npm create komari-plugin hello -- --server http://127.0.0.1:25774 --api-key "$KOMARI_API_KEY" --lang en
+```
+
+Then install dependencies and start development mode:
+
+```sh
+cd hello
+npm install
+npm run typecheck
+npm run dev
+```
+
+`npm run dev` builds the TypeScript source, packages the plugin, uploads it to the
+configured server, enables it, prints the runtime plugin log, and watches the
+source and manifest for changes. A file change automatically repeats that cycle.
+Use `Ctrl+C` to stop watching.
+
+Useful alternatives:
+
+```sh
+# Build, upload, and enable once
+npm run dev -- --once
+
+# Poll runtime logs less frequently
+npm run dev -- --log-interval 1000
+
+# Disable runtime log forwarding
+npm run dev -- --no-logs
+```
+
+The `[dev:log]` lines come from the same per-plugin runtime log buffer shown in
+the Komari admin UI. Build output and `enabled/running` status are local developer
+tool output, not plugin runtime logs.
+
+### Generated project layout
+
+```text
+hello/
+├── src/plugin.ts          # TypeScript plugin source
+├── komari-plugin.json     # Plugin manifest
+├── komari.local.json      # Local server URL and API key; never commit
+├── package.json
+└── tsconfig.json
+```
+
+The generated manifest references the SDK Schema. In VS Code, this enables field
+completion, validation, and English hover descriptions:
+
+```json
+{
+  "$schema": "./node_modules/@komari-monitor/plugin-sdk/schema/komari-plugin.schema.json"
+}
+```
+
+The generated project uses package version `1.4.1`. Package versions and Komari
+server versions are not required to match patch-for-patch; this SDK release tracks
+the Komari `1.4.x` compatibility line. The manifest `komari` field is a server
+version constraint and currently uses supported forms such as `>=1.4.0`.
+
+### SDK example
+
+```ts
+import { definePlugin, jsonResponse, server } from "@komari-monitor/plugin-sdk";
+
+definePlugin({
+  load() {
+    server.route("GET", "/hello", (_req, res) => {
+      jsonResponse(res, { ok: true });
+    });
+  },
+});
+```
+
+The SDK provides typed `server` helpers and a typed RPC catalog. Use `rpc.call()`
+for cataloged methods and `server.call()` for dynamic or plugin-owned methods. See
+[server Module](./server-api) and [RPC Methods](./rpc) for the complete API.
+
+## Manual ZIP Workflow
 
 ### 1. Create the plugin directory
 
@@ -121,8 +229,9 @@ manifest ≤ 1 MiB. Any path-traversal entry (`../`, absolute paths) rejects the
 
 1. The server reads and validates `komari-plugin.json` and checks the `komari` version
    constraint.
-2. A dedicated JS runtime is created (sandbox root: `data/plugin/<short>`), and the
-   entry script is **executed immediately**.
+2. A dedicated JS runtime is created (sandbox root: `data/plugin/<short>`, plus the
+   long-term storage directory `data/plugin-data/<short>` injected as `__storageDir__`),
+   and the entry script is **executed immediately**.
 3. If the script defines a global `load()` function, it is invoked.
 4. A top-level error or a `load()` error → the plugin is **auto-disabled** and the
    error is persisted in `last_error`.
@@ -149,17 +258,42 @@ On server startup (`LoadAll`), every **enabled and approved** plugin is loaded
 automatically; plugins that fail to load are auto-disabled with `last_error` persisted
 (this does not stop the server from starting).
 
+## Long-term storage directory `__storageDir__`
+
+Every plugin gets a dedicated long-term storage directory when enabled:
+
+```text
+data/plugin-data/<short>/   # long-term storage (untouched by updates)
+```
+
+- Fully separated from the code directory `data/plugin/<short>` (the ZIP contents); the
+  `fs` sandbox covers both directories.
+- Scripts access it via the global `__storageDir__` (injected in NodeJS mode, absolute
+  path):
+  ```js
+  const fs = require("fs");
+  const path = require("path");
+  fs.writeFileSync(path.join(__storageDir__, "cache.json"), "{}");
+  ```
+- **Updates (reinstall) replace only the code directory; the long-term storage survives**
+  — suitable for caches, user data, and similar state.
+- **Deleting a plugin removes both directories** (delete means full removal).
+- Same sandbox rules as the plugin directory: nothing escapes `__storageDir__`, other
+  plugins' storage directories are unreachable, and cross-directory `fs.renameSync`
+  (plugin dir ↔ storage dir) is rejected.
+
 ## Permissions & Approval
 
 ### Permission model
 
 - **Always granted** (no declaration needed, no approval): `server.registerRPC`,
-  `server.getConfig`, file access inside the plugin directory.
+  `server.cron`, `server.getConfig`, file access inside the plugin directory and
+  `__storageDir__`.
 - **Granted by declaration** (runtime settings, no approval): `permissions.node`,
   `maxHTTPBodyBytes`, `maxChildOutputBytes`, `timeout`.
-- **Require admin approval** (6 sensitive capabilities; any of them being `true`
-  triggers the flow): `allowSystemRPC`, `allowRoutes`, `allowHooks`, `allowExec`,
-  `allowListen`, `allowAllFileAccess`.
+- **Require admin approval** (7 sensitive capabilities; any of them being `true`
+  triggers the flow): `allowSystemRPC`, `allowRoutes`, `allowHooks`,
+  `allowHTMLInject`, `allowExec`, `allowListen`, `allowAllFileAccess`.
 
 ### Approval flow
 
@@ -174,7 +308,7 @@ capability set with the hash saved at the last approval:
   `node`/timeout/size limits do **not** re-trigger approval).
 
 ::: tip Capability hash
-The approval hash covers only the 6 sensitive capabilities (a `sha256:`-prefixed JSON
+The approval hash covers only the 7 sensitive capabilities (a `sha256:`-prefixed JSON
 hash); `node`, `maxHTTPBodyBytes`, `maxChildOutputBytes`, and `timeout` are excluded.
 :::
 
@@ -182,7 +316,7 @@ hash); `node`, `maxHTTPBodyBytes`, `maxChildOutputBytes`, and `timeout` are excl
 
 | API | Behavior without permission |
 | --- | --- |
-| `server.route` / `server.hook` | Throws `TypeError` at **load time**; plugin load fails (auto-disabled) |
+| `server.route` / `server.static` / `server.hook` / `server.injectHTML` | Throws `TypeError` at **load time**; plugin load fails (auto-disabled) |
 | `server.call` | The returned Promise is **rejected** (load not blocked) |
 | `require("child_process")` | Throws (no `allowExec`) |
 | `net`/`http` Server `listen()` | Throws (no `allowListen`) |
@@ -207,8 +341,9 @@ runtime APIs).
 
 ## Security & Limitations
 
-- The plugin sandbox root is `data/plugin/<short>`: `fs` and `require` are confined to
-  it, and path traversal / symlink escapes are rejected at the OS level (`os.Root`).
+- The plugin sandbox roots are `data/plugin/<short>` and
+  `data/plugin-data/<short>` (`__storageDir__`): `fs` and `require` are confined to
+  them, and path traversal / symlink escapes are rejected at the OS level (`os.Root`).
 - `server.call` runs with **admin authority** — a plugin calling `admin:*` methods is
   equivalent to the admin doing it themselves.
 - The JS runtime is **not a browser and not full Node.js**: no DOM, WebSocket, ESM,
@@ -225,7 +360,7 @@ runtime APIs).
 | Document | Contents |
 | --- | --- |
 | [Manifest Reference](./manifest) | All `komari-plugin.json` fields, permissions, configuration, pages |
-| [server Module](./server-api) | `server.route` / `server.hook` / `server.call` / `server.registerRPC` / `server.getConfig` and lifecycle hooks |
+| [server Module](./server-api) | `server.route` / `server.static` / `server.hook` / `server.injectHTML` / `server.call` / `server.registerRPC` / `server.cron` / `server.getConfig` and lifecycle hooks |
 | [JS Runtime](./runtime) | Every JavaScript API available in the sandbox and its compatibility |
 | [RPC Methods](./rpc) | All system RPC methods callable via `server.call` |
 | [Publishing to the Plugin Market](./market) | Publish your plugin to the official plugin market |

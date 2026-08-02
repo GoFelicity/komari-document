@@ -11,13 +11,17 @@ const server = require("server");
 | Method | Description | Permission |
 | --- | --- | --- |
 | [`server.route(method, path, handler)`](#server-route) | Register an HTTP route on the host engine | `allowRoutes` |
-| [`server.hook(kind, fn)`](#server-hook) | Register request/response hooks | `allowHooks` |
+| [`server.static(path, dir, opts)`](#server-static) | Mount a static folder from the plugin directory, optional SPA fallback | `allowRoutes` |
+| [`server.hook(kind, matcher?, fn)`](#server-hook) | Register request/response hooks | `allowHooks` |
+| [`server.injectHTML(head, body)`](#server-injecthtml) | Embed CSS/JS into every HTML page | `allowHTMLInject` |
 | [`server.call(method, params...)`](#server-call) | Call system RPC with admin authority | `allowSystemRPC` |
-| [`server.registerRPC(method, handler)`](#server-registerrpc) | Register a plugin-owned RPC method | always granted |
-| [`server.getConfig()`](#server-getconfig) | Read configuration (merged with defaults) | always granted |
+| [`server.registerRPC(method, handler)`](#server-registerrpc) | Register a plugin-owned RPC method | Always granted |
+| [`server.cron(expr, handler)`](#server-cron) | Run handler on a cron schedule | Always granted |
+| [`server.getConfig()`](#server-getconfig) | Read configuration (merged with defaults) | Always granted |
 
-Missing `allowRoutes` / `allowHooks` throws `TypeError` at **load time** (plugin load
-fails); missing `allowSystemRPC` rejects the Promise returned by `server.call`.
+Missing `allowRoutes` / `allowHooks` / `allowHTMLInject` throws `TypeError` at
+**load time** (plugin load fails); missing `allowSystemRPC` rejects the Promise
+returned by `server.call`.
 
 ## Lifecycle Hooks
 
@@ -132,18 +136,45 @@ server.route("GET", "/stream", async (req, res) => {
   loop and return (returning ends the stream).
 - Streaming idle timeout beyond `timeout` also aborts and closes the stream.
 
+## server.static
+
+Mounts a **static folder** from the plugin directory at a given path, without writing a
+handler per file:
+
+```js
+server.static("/ui", "dist");
+server.static("/app", "dist", { spa: true }); // SPA mode
+```
+
+| Arg | Type | Description |
+| --- | --- | --- |
+| `path` | string | Mount path; must start with `/` and must not be `/`; a trailing `/` is ignored |
+| `dir` | string | Relative folder inside the plugin directory (e.g. `"dist"`); must exist |
+| `opts` | object | Optional; `{ spa: true }` enables SPA fallback |
+
+- Requires `allowRoutes`, otherwise a `TypeError` is thrown at load time.
+- Serves `GET` and `HEAD`: the mount path itself returns `index.html` from the folder,
+  subpaths return the matching file; a directory resolves to its own `index.html`.
+- With `spa: true`, requests that **resolve to no file** fall back to the folder root
+  `index.html` (client-side routing refreshes no longer 404); real files always win.
+- Traversal requests (`..`) are rejected with 404; file resolution stays confined to `dir`.
+- Like `server.route`: mount slots survive unload (they return 404) and are restored on
+  reload; re-mounting the same path within one load refreshes the config.
+
 ## server.hook
 
-Registers **request** or **response** hooks on the host HTTP chain, affecting **all**
-HTTP requests entering/leaving the server (except WebSocket upgrade requests, which
-pass through untouched):
+Registers **request** or **response** hooks on the host HTTP chain. By default they
+affect **all** HTTP requests entering/leaving the server (except WebSocket upgrade
+requests, which pass through untouched); with an optional path filter they only run
+for matching requests (non-matching requests skip the hook chain entirely, including
+body buffering):
 
 ```js
 server.hook("request", (req) => {
   req.headers["x-hooked"] = "yes";
 });
 
-server.hook("response", (req, res) => {
+server.hook("response", "/api/*", (req, res) => {
   res.statusCode = 201;
   res.body = res.body + "|hooked";
 });
@@ -152,6 +183,7 @@ server.hook("response", (req, res) => {
 | Arg | Type | Description |
 | --- | --- | --- |
 | `kind` | `"request"` \| `"response"` | Hook type |
+| `matcher` | string (optional) | Path filter: `"/api/foo"` (exact), `"/api/*"` (subtree), `"POST /api/foo"` (method + path); case-insensitive |
 | `fn` | function | Request hook `fn(req)`; response hook `fn(req, res)` |
 
 Requires `allowHooks`, otherwise a `TypeError` is thrown at load time.
@@ -169,7 +201,8 @@ Requires `allowHooks`, otherwise a `TypeError` is thrown at load time.
 }
 ```
 
-- Request bodies are read up to 32 MiB (`maxHTTPBodyBytes`).
+- Request bodies are read up to the `maxHTTPBodyBytes` declared by the matching
+  hook's plugin (default 32 MiB when undeclared); larger requests return `413`.
 - Hooks run in registration order; a hook error → client receives
   `500 plugin request hook failed` and remaining hooks are skipped.
 - Hook execution is bounded by `timeout`; a timeout is treated as a failure.
@@ -186,9 +219,44 @@ Requires `allowHooks`, otherwise a `TypeError` is thrown at load time.
 ```
 
 - Responses are buffered (up to 32 MiB) so hooks can rewrite them.
+- **Rewriting the body drops the original response's `Content-Length`** so Go
+  recomputes the length (or falls back to chunked encoding) instead of truncating
+  or hanging the client.
 - **Streaming responses (SSE, after the first `Flush()`) or responses larger than
   32 MiB pass through untouched**; hooks can no longer rewrite them (logged).
 - Hook errors are logged only and do not block the response.
+
+## server.injectHTML
+
+Embeds custom CSS/JS into **every** `text/html` response: the `head` fragment is
+inserted before `</head>`, the `body` fragment before `</body>` (case-insensitive; if
+`</head>` is absent the `head` fragment is prepended, if `</body>` is absent the `body`
+fragment is appended):
+
+```js
+server.injectHTML(
+  "<style>.plugin-badge{color:red}</style>",
+  '<script src="/api/mjpeg_live.js"></script>'
+);
+```
+
+| Arg | Type | Description |
+| --- | --- | --- |
+| `head` | string | HTML embedded into `<head>` (style sheets, `<style>`, `<meta>`, ...); may be empty |
+| `body` | string | HTML embedded into `<body>` (`<script>`, ...); may be empty |
+
+- Applies to **all** HTML pages, including the `/admin` pages, the `/terminal` pages,
+  the login page, public pages and plugin iframe pages (these are not affected by the
+  site's `custom_head`/`custom_body` settings).
+- **Non-HTML responses are never modified**: JSON, images, fonts, MJPEG/SSE streams,
+  etc. pass through unmodified and are not buffered.
+- Injection runs **after** the plugin response hooks, so it sees the final rewritten
+  HTML.
+- Responses larger than 32 MiB, streaming responses (after the first `Flush()`) and
+  WebSocket upgrade requests pass through without injection.
+- Multiple plugins accumulate in registration order; unloading a plugin removes its
+  fragments automatically.
+- Requires `allowHTMLInject`, otherwise a `TypeError` is thrown at load time.
 
 ## server.call
 
@@ -249,6 +317,33 @@ server.registerRPC("plugin:fail", () => {
   (`err.code` / `err.message` / `err.data` are propagated).
 - Prefer the `plugin:<name>:<action>` naming convention to avoid clashes with system
   methods.
+
+## server.cron
+
+Runs a handler on the plugin event loop on a cron schedule:
+
+```js
+server.cron("0 0 9 * * *", async () => {
+  // Runs every day at 09:00
+});
+
+server.cron("@every 1m", () => {
+  // Runs every minute
+});
+```
+
+| Arg | Description |
+| --- | --- |
+| `expr` | Cron expression: 5 fields (minute hour day-of-month month day-of-week), 6 fields (second minute hour day-of-month month day-of-week), or `@every <duration>` (e.g. `@every 1m`, `@every 30s`); fields support `*`, `*/n`, `a-b`, and comma lists |
+| `handler` | `() => void`; runs on the plugin event loop on every fire |
+
+- **Always granted**, no permission declaration needed.
+- An invalid expression fails the load (the error is written to `last_error` and the
+  plugin is auto-disabled).
+- Multiple jobs may be registered per load; all are removed automatically on unload or
+  load failure.
+- Errors thrown by the handler are logged to the plugin log and do not stop future
+  fires.
 
 ## server.getConfig
 

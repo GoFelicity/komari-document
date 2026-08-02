@@ -9,6 +9,28 @@ The plugin market is built into the server; the default source is the official K
 catalog. The server supports multiple configurable market sources (REST endpoints:
 see [RPC Methods - Plugin management](./rpc#plugin-management-methods-in-detail)).
 
+## Managing market sources
+
+On the **Market - Plugin Market** page in the admin panel you can manage JSON catalog
+sources, exactly like the theme market:
+
+- **Add a source**: enter a source name and a catalog URL (for example
+  `https://raw.githubusercontent.com/owner/repo/main/v1.json`); it is enabled by default.
+- **Edit a source**: change its name, URL, or enabled state.
+- **Enable / disable**: disabled sources are skipped when loading catalogs but their
+  configuration is kept.
+- **Delete a source**: the source is removed; the official source can be re-added later
+  with the same URL.
+
+Source URLs must be HTTP(S) and must not contain userinfo (`user:pass@`); the server
+rejects download hosts pointing to private or local IPs. Catalogs are fetched per source
+concurrently and cached on the server for 10 minutes; the refresh button (or
+`?refresh=true`) forces a re-fetch. A failing source shows an error at the top of the
+page without affecting the other sources.
+
+Each source record has the fields `id`, `name`, `url`, `enabled` and is stored in the
+server configuration key `plugin_market_sources`.
+
 ## Catalog entry (v1.json)
 
 Each installable plugin contains these fields:
@@ -27,7 +49,6 @@ Each installable plugin contains these fields:
   "version": "1.0.0",
   "author": "Your Name",
   "url": "https://github.com/your-name/komari-example",
-  "preview": "https://example.com/preview.png",
   "download": "https://example.com/plugin.zip",
   "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
   "komari": ">=1.0.0"
@@ -42,7 +63,6 @@ Each installable plugin contains these fields:
 | `version` | Yes | plugin version |
 | `author` | Yes | string or i18n object |
 | `url` | No | project homepage, HTTP(S) URL without userinfo (`user:pass@`) |
-| `preview` | No | preview image, absolute HTTP(S) URL; PNG/JPEG/GIF/WebP/AVIF |
 | `download` | paired with `sha256` | plugin ZIP download URL, absolute HTTP(S); may be omitted together with `sha256` for source-only entries |
 | `sha256` | paired with `download` | lowercase SHA-256 of that exact ZIP (64 hex chars) |
 | `komari` | No | server version constraint, **must exactly match `komari-plugin.json`** |
@@ -70,7 +90,6 @@ the Action reads them by name.
 Only required:
 
 - GitHub repository URL (must be public)
-- Preview image URL
 - Confirmation that the latest Release ships a plugin package
 
 The Action reads the repository's latest Release and finds the single valid plugin ZIP
@@ -82,7 +101,6 @@ Provide:
 
 - Project URL (must not be GitHub-hosted)
 - Package download URL (must not be GitHub-hosted)
-- Preview image URL
 - Plugin name, unique short name, version, description, and author
 - Confirmation that the code is not malicious and the package has no auto-updates
 
@@ -95,7 +113,6 @@ Provide:
 | Package safety | no absolute/traversal/backslash/NUL paths, no symlinks; ≤ 10,000 files, ≤ 128 MiB per file, ≤ 512 MiB extracted |
 | Manifest | exactly one root `komari-plugin.json` (≤ 1 MiB); valid `name/short/version/author` |
 | Consistency | `short` and `version` from the external-hosted form must match the in-package manifest |
-| Preview | PNG/JPEG/GIF/WebP/AVIF; GitHub `blob` links normalized to `raw` links |
 | Catalog | SHA-256 computed, sorted case-insensitively by `short`, `updated_at` updated |
 
 On failure the Action comments the reason on the issue and closes it; transient

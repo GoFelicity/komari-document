@@ -6,6 +6,23 @@ Komari 官方插件市场是一个开源目录仓库（`plugin-market`），存�
 插件市场随服务端内置，默认源为 Komari 官方目录。服务端支持配置多个市场源（REST 端点
 见 [RPC 接口 - 插件管理](./rpc#插件管理相关方法的补充说明)）。
 
+## 市场源管理
+
+在后台「市场 - 插件市场」页面中可以管理 JSON 目录源，与主题市场的源管理一致：
+
+- **添加源**：填写源名称与目录地址（例如 `https://raw.githubusercontent.com/owner/repo/main/v1.json`），
+  默认启用。
+- **编辑源**：修改名称、地址或启用状态。
+- **启用 / 停用**：停用的源不再参与目录加载，但配置会保留。
+- **删除源**：删除后该源不再显示；官方源被删除后可用同样 URL 重新添加。
+
+源地址必须是 HTTP(S) URL，且不能包含用户信息（`user:pass@`）；服务端会拒绝指向内网或
+私有 IP 的下载主机。目录按源并发拉取，结果在服务端缓存 10 分钟，点击刷新按钮（或
+`?refresh=true`）可强制重新拉取；单个源拉取失败会在页面顶部提示错误，不影响其他源。
+
+每条源记录包含 `id`、`name`、`url`、`enabled` 四个字段，存于服务端配置
+`plugin_market_sources`。
+
 ## 目录条目（v1.json）
 
 每个可安装插件包含以下字段：
@@ -24,7 +41,6 @@ Komari 官方插件市场是一个开源目录仓库（`plugin-market`），存�
   "version": "1.0.0",
   "author": "Your Name",
   "url": "https://github.com/your-name/komari-example",
-  "preview": "https://example.com/preview.png",
   "download": "https://example.com/plugin.zip",
   "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
   "komari": ">=1.0.0"
@@ -39,7 +55,6 @@ Komari 官方插件市场是一个开源目录仓库（`plugin-market`），存�
 | `version` | 是 | 插件版本号 |
 | `author` | 是 | string 或 i18n 对象 |
 | `url` | 否 | 项目主页，HTTP(S) URL，不能含用户信息（`user:pass@`） |
-| `preview` | 否 | 预览图，绝对 HTTP(S) URL，图片格式为 PNG/JPEG/GIF/WebP/AVIF |
 | `download` | 与 `sha256` 成对 | 插件 ZIP 下载地址，绝对 HTTP(S) URL；仅作来源展示的条目可省略 |
 | `sha256` | 与 `download` 成对 | 该 ZIP 的小写 SHA-256（64 位十六进制） |
 | `komari` | 否 | 服务端版本约束，**必须与 `komari-plugin.json` 完全一致** |
@@ -64,7 +79,6 @@ Komari 官方插件市场是一个开源目录仓库（`plugin-market`），存�
 只需提供：
 
 - GitHub 仓库地址（必须公开）
-- 预览图链接
 - 确认最新 Release 中附带插件 ZIP 包
 
 Action 会读取仓库的最新 Release，从 Release 资产中找到唯一的合法插件 ZIP（包内必须
@@ -76,7 +90,6 @@ Action 会读取仓库的最新 Release，从 Release 资产中找到唯一的�
 
 - 项目地址（不能是 GitHub 托管地址）
 - 插件包下载地址（不能是 GitHub 托管地址）
-- 预览图链接
 - 插件名称、唯一短名、版本、描述、作者
 - 确认代码无恶意行为、包不会自动更新
 
@@ -89,7 +102,6 @@ Action 会读取仓库的最新 Release，从 Release 资产中找到唯一的�
 | 包安全 | 无绝对路径/穿越/反斜杠/NUL 路径、无软链接；≤ 10,000 文件、单文件 ≤ 128 MiB、解压 ≤ 512 MiB |
 | 清单 | 根目录恰好一个 `komari-plugin.json`（≤ 1 MiB）；`name/short/version/author` 合法 |
 | 一致性 | 外部托管表单提交的 `short`、`version` 必须与包内清单一致 |
-| 预览图 | PNG/JPEG/GIF/WebP/AVIF；GitHub `blob` 链接自动规范化为 `raw` 链接 |
 | 目录 | 计算 SHA-256、按 `short` 不区分大小写排序、更新 `updated_at` |
 
 提交失败时 Action 会在 Issue 中留言原因并自动关闭；瞬时失败（403/408/425/429/5xx、
