@@ -16,6 +16,16 @@ theme.zip
 
 Every theme must include `komari-theme.json`. It declares the theme name, short identifier, description, version, author, and optional configuration.
 
+`name`, `description`, and `author` each accept either a plain string or an i18n object. The admin UI resolves the current locale, then its base language, then the first available value.
+
+```json
+{
+  "name": { "zh-CN": "示例主题", "en": "Example Theme" },
+  "description": { "zh-CN": "用于演示", "en": "For demonstration" },
+  "author": "Example Author"
+}
+```
+
 ## Configuration
 
 Komari server `1.0.5` and later supports managed theme configuration. A theme can expose form fields in the admin panel and read the saved values from `/api/public` through `theme_settings`.
@@ -26,9 +36,39 @@ Supported configuration modes include:
 - `raw`: the theme provides its own raw configuration page.
 - `redirect`: the admin menu redirects to a theme-provided page.
 
+### Managed Configuration
+
+Field tables, type meanings, i18n text, default value merge rules, and selector
+storage/output rules are shared with plugins. See [Managed Configuration](./managed-config).
+
 ## Public API
 
 Theme pages can use public Komari APIs to read site settings, node status, and theme settings. See [API](/en/dev/api) for entry points.
+
+The theme admin page saves through `POST /api/admin/theme/settings?theme=<short>` and
+exposes the values through `data.theme_settings` in `GET /api/public`:
+
+```json
+{
+  "status": "success",
+  "message": "",
+  "data": {
+    "sitename": "Komari",
+    "theme": "managed-config-demo",
+    "theme_settings": {
+      "headline": "Komari configuration demo",
+      "selected_nodes": [
+        "8832553d-a03f-4312-af8b-c5d9ed959c93",
+        "76d47ce1-bb17-4f03-adf5-c9a795dc1fe2"
+      ],
+      "selected_ping_tasks": [8, 7]
+    }
+  }
+}
+```
+
+For installed, non-`default` managed themes, missing values are filled from manifest
+defaults and deleted node and Ping task IDs are omitted from the `theme_settings` output.
 
 ## Theme Market and Releases
 

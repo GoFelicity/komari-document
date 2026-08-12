@@ -25,9 +25,9 @@ theme.zip
 
 ```json
 {
-  "name": "Komari Test Theme",
+  "name": { "zh-CN": "Komari 测试主题", "en": "Komari Test Theme" },
   "short": "TestTheme", // 唯一标识符，只能包含大小写字母、数字、下划线和连字符
-  "description": "A test theme for Komari",
+  "description": { "zh-CN": "用于 Komari 的测试主题", "en": "A test theme for Komari" },
   "version": "1.0.0",
   "author": "Akizon77",
   "url": "https://github.com/komari-monitor/komari",
@@ -40,17 +40,19 @@ theme.zip
 
 | 字段            | 类型   | 必需       | 描述                                                                                     |
 | --------------- | ------ | ---------- | ---------------------------------------------------------------------------------------- |
-| `name`          | string | 是         | 主题的完整名称                                                                           |
+| `name`          | string \| object | 是         | 主题的完整名称；支持多语言对象                                                           |
 | `short`         | string | 是         | 主题的唯一标识符，只能包含大小写字母、数字、下划线和连字符；不能为空，且不能为 `default` |
-| `description`   | string | 否（建议） | 主题的描述信息；未填写时后台列表会显示为空                                               |
+| `description`   | string \| object | 否（建议） | 主题的描述信息；支持多语言对象；未填写时后台列表会显示为空                               |
 | `version`       | string | 否（建议） | 主题版本号，建议使用语义化版本；未填写时后台列表会显示为空                               |
-| `author`        | string | 否（建议） | 主题作者；未填写时后台列表会显示为空                                                     |
+| `author`        | string \| object | 否（建议） | 主题作者；支持多语言对象；未填写时后台列表会显示为空                                     |
 | `url`           | string | 否         | 主题的项目地址或作者网站                                                                 |
 | `preview`       | string | 否         | 预览图片的相对路径（相对于主题根目录）                                                   |
 | `configuration` | object | 否         | 主题的动态配置（自 1.0.5 起支持）                                                        |
 
 ::: tip 提示
 后端安装主题时只强制校验 `name` 和 `short`，但建议补全 `description`、`version`、`author` 等展示字段，避免管理后台出现空信息。
+
+`name`、`description` 和 `author` 都可以是普通字符串，或 `{ "zh-CN": "...", "en": "..." }` 形式的多语言对象。管理后台会按当前语言显示。
 :::
 
 ## 动态配置（自 1.0.5 起支持）
@@ -121,6 +123,24 @@ theme.zip
         "type": "richtext",
         "default": "",
         "help": "支持较长 HTML 文本"
+      },
+      {
+        "name": "<strong>选择器底层保存 JSON 字符串，公开 API 返回数组。</strong>",
+        "type": "textbox"
+      },
+      {
+        "key": "featured_nodes",
+        "name": "展示节点",
+        "type": "nodes",
+        "default": "[]",
+        "help": "保存为节点 UUID 的 JSON 字符串数组，读取时返回 string[]"
+      },
+      {
+        "key": "featured_ping_tasks",
+        "name": "展示 Ping 任务",
+        "type": "pingtasks",
+        "default": "[]",
+        "help": "保存为 Ping 任务数字 ID 的 JSON 字符串数组，读取时返回 number[]"
       }
     ]
   }
@@ -180,52 +200,31 @@ theme.zip
 | `name` | string \| object | 否         | 在管理面板展示的配置标题；支持多语言对象；未填写可由系统回退到主题名                                                               |
 | `data` | array \| string  | 按类型决定 | `managed` 为配置项数组，`raw` 为 HTML 字符串，`redirect` 为基于站点根目录的站内相对路径字符串                                      |
 
-### managed 配置项（data 数组元素）
+### managed 配置项
 
-| 字段       | 适用类型   | 必需 | 描述                                                                     |
-| ---------- | ---------- | ---- | ------------------------------------------------------------------------ |
-| `type`     | 全部       | 是   | `string` / `number` / `select` / `switch` / `richtext` / `title`         |
-| `name`     | 全部       | 是   | 显示名称，支持字符串或多语言对象；`title` 类型用于分组标题，不需要 `key` |
-| `key`      | 除 `title` | 是   | 唯一键                                                                   |
-| `required` | `string`   | 否   | 是否必填（默认 `false`）                                                 |
-| `options`  | `select`   | 是   | 逗号分隔的选项：`"A,B,C"`                                                |
-| `default`  | 除 `title` | 否   | 默认值                                                                   |
-| `help`     | 除 `title` | 否   | 帮助提示文本，支持字符串或多语言对象                                     |
+配置项字段、类型含义、多语言文本、默认值合并规则与选择器的存储/输出规则由主题和插件共用，
+详见 [托管配置文档](./managed-config)。
 
-#### 类型含义
-
-- `title`: 纯分隔/标题行，无交互，不应包含 `key`、`default`。
-- `string`: 文本输入。
-- `number`: 数字输入，前端需自行校验范围。
-- `select`: 下拉选择，`options` 为必填。
-- `switch`: 布尔开关，值为 `true/false`。
-- `richtext`: 长文本输入，适合 HTML 片段或较长配置文本。
-
-### 多语言文本
-
-`configuration.name`、`managed` 配置项的 `name` 和 `help` 可以是字符串，也可以是多语言对象：
+主题通过 `POST /api/admin/theme/settings?theme=<short>` 保存配置，并通过 `GET /api/public`
+的 `data.theme_settings` 公开。`/api/public` 输出示例：
 
 ```json
 {
-  "name": {
-    "zh-CN": "背景图片 URL",
-    "en": "Background Image URL",
-    "ja": "背景画像 URL"
+  "status": "success",
+  "message": "",
+  "data": {
+    "theme": "managed-config-demo",
+    "theme_settings": {
+      "headline": "Komari configuration demo",
+      "selected_nodes": [
+        "8832553d-a03f-4312-af8b-c5d9ed959c93",
+        "76d47ce1-bb17-4f03-adf5-c9a795dc1fe2"
+      ],
+      "selected_ping_tasks": [8, 7]
+    }
   }
 }
 ```
-
-前端会优先匹配当前语言（如 `zh-CN`），然后匹配基础语言（如 `zh`），最后回退到对象中的第一个值。
-
-### 默认值与公开数据
-
-`/api/public` 返回的 `theme_settings` 会公开当前主题的动态配置值。对于已安装且非 `default` 的 `managed` 主题，后端会把已保存配置和 `komari-theme.json` 中声明的默认值合并：
-
-- 已保存的值优先。
-- `select` 未设置 `default` 时，会使用 `options` 中的第一个选项。
-- `number` 未设置 `default` 时默认 `0`。
-- `switch` 未设置 `default` 时默认 `false`。
-- `string` / `richtext` 等其他类型未设置 `default` 时默认空字符串。
 
 这些数据是公开可读的，请不要把密钥、Token、私密 URL 等敏感信息放入主题动态配置。
 
@@ -372,6 +371,27 @@ Komari 系统包含以下特殊页面，这些页面不受主题影响：
 
 1. **主题外观**: 使用 `appearance` 来实现明暗主题切换
 2. **国际化**: 使用 `language` 来支持多语言功能
+
+### 语义化 classname
+
+默认主题为绝大多数页面和组件提供了语义化的 `km-` 前缀 classname，作为稳定的 DOM 定位钩子，方便自定义脚本（自定义头部/底部 HTML、浏览器插件、油猴脚本等）通过 `querySelector` 直接操作页面元素：
+
+```js
+// 示例：给所有节点卡片添加描边
+document.querySelectorAll(".km-node-card").forEach((card) => {
+  card.style.outline = "2px solid var(--accent-9)";
+});
+```
+
+#### 命名规则
+
+| 类型       | 规则                       | 示例                                                                                                                    |
+| ---------- | -------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| 页面根节点 | `km-page-<路由>`           | `km-page-instance`、`km-page-admin-dashboard`、`km-page-admin-settings-general`、`km-page-admin-market-plugins`         |
+| 布局容器   | `km-layout` / `km-main` 等 | `km-layout`、`km-main`、`km-navbar`、`km-footer`、`km-admin-layout`、`km-admin-settings-layout`                         |
+| 共享组件   | `km-<组件名>`              | `km-node-card`、`km-node-display`、`km-login-dialog`、`km-upload-dialog`、`km-load-chart`、`km-command-clipboard`       |
+| 页面区块   | `km-<页面>-<区块>`         | `km-instance-server-list`、`km-instance-server-item`、`km-dashboard-card`、`km-exec-editor-input`、`km-plugins-toolbar` |
+| UI 基础件  | `km-ui-<组件>`             | `km-ui-button`、`km-ui-input`、`km-ui-table`、`km-ui-table-row`、`km-ui-checkbox`                                       |
 
 ::: tip 提示
 关于接口？请求查看 [API 接口文档](./api.md)。

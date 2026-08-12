@@ -91,37 +91,36 @@ values via `server.getConfig()` (saved values are merged with manifest defaults)
       { "key": "count", "name": "Count", "type": "number" },
       { "key": "enabled", "name": "Enabled", "type": "switch", "default": true },
       { "key": "mode", "name": "Mode", "type": "select", "options": "json,text" },
-      { "key": "note", "name": "Note", "type": "string", "help": "Usage instructions" }
+      { "key": "note", "name": "Note", "type": "string", "help": "Usage instructions" },
+      { "name": "<strong>Selections are stored as JSON strings and returned as arrays.</strong>", "type": "textbox" },
+      { "key": "nodes", "name": "Nodes", "type": "nodes", "default": "[]" },
+      { "key": "tasks", "name": "Ping Tasks", "type": "pingtasks", "default": "[]" }
     ]
   }
 }
 ```
 
-### Item fields
+### Item fields, defaults, and selectors
 
-| Field | Type | Required | Description |
-| --- | --- | --- | --- |
-| `key` | string | Yes | Configuration key |
-| `name` | string \| i18n | Yes | Form label |
-| `type` | string | Yes | `string` / `number` / `select` / `switch` / `title` / `richtext` |
-| `options` | string | No | Options for `select`, comma-separated |
-| `default` | any | No | Default value |
-| `required` | boolean | No | Whether the field is required |
-| `help` | string \| i18n | No | Help text |
+Item fields, type meanings, i18n text, default value merge rules, and selector
+storage/output rules are shared with themes. See
+[Managed Configuration](../managed-config).
 
-### Default value merge rules
+Plugin configuration is stored in the `plugin_configurations` table of the main
+database. At runtime, `await server.getConfig()` returns the merged value object;
+selector fields are already arrays and omit deleted references:
 
-`server.getConfig()` returns the merge of "saved values + manifest defaults"; saved
-values take precedence. Unsaved keys are filled with these fallbacks:
+```js
+const config = await server.getConfig();
+// config.selected_nodes: string[]
+// config.selected_ping_tasks: number[]
+```
 
-| Type | Fallback without default |
-| --- | --- |
-| `select` | first option |
-| `number` | `0` |
-| `switch` | `false` |
-| others | `""` |
-
-Configuration is stored in the `plugin_configurations` table of the main database.
+`admin:getPluginConfiguration` (REST:
+`GET /api/admin/plugin/configuration?short=<short>`) returns
+`{ configuration, data }`, where `data` also contains arrays. Saving uses
+`admin:setPluginConfiguration` (REST: `POST /api/admin/plugin/configuration`);
+selector fields remain JSON strings in the request.
 
 ## Pages
 
