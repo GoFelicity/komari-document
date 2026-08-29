@@ -21,19 +21,19 @@
 
 计划移除 /api/mjpeg_live 支持
 
-### 1.4.0
+### Agent v2-only
 
-计划移除 Agent v1 协议及其接口：
+Agent v1 协议已正式退役，以下接口已移除：
 
 - `GET /api/clients/report`
 - `POST /api/clients/report`
 - `POST /api/clients/uploadBasicInfo`
 - `POST /api/clients/task/result`
 
-计划移除以下旧接口：
+Agent 现在必须使用 protocol/v2 和 `/api/clients/v2/rpc`，包括 `agent.report`、`agent.basicInfo`、`agent.pingResult` 和 `agent.taskResult`。
+
+以下旧接口仍属于独立的兼容性清理项：
 
 - `/api/records/*`
 - `/api/clients`
 - `/api/recent/:uuid`
-
-同时计划移除 Agent 下发 Ping 时使用的 v1 旧 payload。Agent 应升级至 protocol/v2，并使用 `/api/clients/v2/rpc`。

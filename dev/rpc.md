@@ -582,56 +582,6 @@ Komari 参数传递支持指名和数组两种方式。
 | --- | --- |
 | `PingMetricStatsResp` | `start`、`end`、`interval_seconds`、`stats: PingMetricTaskStats[]`、`count` |
 
-## client:getPingTasks
-
-描述：获取分配给当前客户端的 Ping 任务。
-
-参数：无
-
-返回：
-
-| 返回值类型 | 描述 |
-| --- | --- |
-| `PingTask[]` | 当前客户端可执行的任务数组 |
-
-## client:uploadPingResult
-
-描述：上报当前客户端的 Ping 执行结果。
-
-参数：
-
-| 参数名 | 类型 | 必填 | 说明 |
-| --- | --- | --- | --- |
-| task_id | uint | 是 | Ping 任务 ID |
-| value | int | 是 | 延迟毫秒数；负值代表失败 |
-| ping_type | string | 是 | 客户端协议兼容字段 |
-| finished_at | RFC3339 | 是 | 完成时间 |
-
-返回：
-
-| 返回值类型 | 描述 |
-| --- | --- |
-| object | `{ status: "success" }` |
-
-## client:taskResult
-
-描述：上报当前客户端的远程命令执行结果。
-
-参数：
-
-| 参数名 | 类型 | 必填 | 说明 |
-| --- | --- | --- | --- |
-| task_id | string | 是 | 任务 ID |
-| result | string | 是 | 命令输出 |
-| exit_code | int | 是 | 进程退出码 |
-| finished_at | RFC3339 | 是 | 完成时间 |
-
-返回：
-
-| 返回值类型 | 描述 |
-| --- | --- |
-| object | `{ status: "success", message: string }` |
-
 ::: warning 权限
 `admin:*` 方法仅允许管理员调用；`admin:exec` 还需要通过敏感操作二次验证。
 :::

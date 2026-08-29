@@ -1,150 +1,101 @@
-# 通过 HTTP 接口上报信息
+# 通过 HTTP 接入 Komari
 
-在某些情况下，您的设备可能不具备标准程序运行环境，或者无法部署常驻进程来安装 Agent 上报信息（例如 Mikrotik RouterOS 路由器）。针对这种情况，可以通过 HTTP 接口来上报信息。
-
-本文档将指导您调用相关接口，并对相关接口字段加以解释。
+当设备无法运行常驻 Agent 或不支持 WebSocket 时，可以通过 HTTP POST 调用 Agent v2 JSON-RPC 接口上报信息。
 
 ## 前提条件
 
-- `Komari` Server 端版本号 >= 1.1.8
-- 您的设备可以通过 `脚本` 或其他编程形式获取设备、网络相关信息
-- 您的设备支持通过 `HTTP` 接口同 `Server` 端进行通讯
-- 您的设备支持通过 `定时任务` 来执行脚本
-- 您需要拥有编程基础，了解 HTTP 以及如何在您的设备上进行编程
+- 已在 Komari Server 中创建节点并获取 token
+- 设备支持定时 HTTP 请求
+- 请求地址为 `POST /api/clients/v2/rpc?token={token}`
 
-> 接口信息也可参考 [Agent 开发](/dev/agent.html#信息上报机制)
+Agent v1 的 `/api/clients/report`、`/api/clients/uploadBasicInfo`、`/api/clients/ping/tasks` 和 `/api/clients/ping/result` 接口已移除。
 
-> 如果您的设备支持 WebSocket，建议使用 WebSocket 接口，具体信息参见上方链接
+## JSON-RPC 请求
 
-## 获取 Token
-
-在管理后台添加一个新的节点，并从节点对应的 Agent 命令中复制 token 参数（即 -t 参数）。
-
-![dev-http-token](/assets/dev-http-token.png)
-
-## 使用介绍
-
-通过 HTTP 协议来调用如下接口，详细调用方式和字段见后续章节。
-
-- 基础信息上报接口(必须)
-  + 上传设备基础信息，如硬件规格、IP、系统版本等
-  + 建议 `5-30分钟` 调用一次
-
-- 实时监控数据上报接口(必须)
-  + 上传设备实时状态，如 CPU、内存、磁盘占用率、网速、已开机时间等
-  + 建议 `5-8秒` 调用一次
-
-- Ping 任务列表获取接口(可选)
-  + 获取当前节点需要执行的任务列表
-  + 建议 `30秒-1分钟` 调用一次
-
-- Ping 任务执行结果上传接口(可选)
-  + 根据前一个接口获取的任务列表，执行对应的 Ping 任务，然后上报执行结果
-  + 和获取 Ping 任务接口串行执行
-
-> 所有接口的数据单位均为 Byte
-
-## 1. 基础信息上报接口
-
-- 端点： `POST /api/clients/uploadBasicInfo?token={token}`
-
-- Payload：
+所有请求都使用 JSON-RPC 2.0 envelope：
 
 ```json
 {
-  "arch": "amd64", // 系统架构
-  "cpu_cores": 12, // CPU 逻辑核心数
-  "cpu_physical_cores": 6, // CPU 物理核心数，未知时为 0
-  "cpu_name": "AMD Ryzen 9 9950X3D", // CPU 名称
-  "disk_total": 1099511627776, // 磁盘空间
-  "gpu_name": "NVIDIA GeForce RTX 5090", // 显卡名称
-  "ipv4": "1.1.1.1", // IPv4 地址
-  "ipv6": "2606:4700:4700::1111", // IPv6 地址
-  "mem_total": 137438953472, // 内存空间
-  "os": "Windows 11 Home", // 操作系统名称
-  "kernel_version": "26100.4652", // 内核版本号
-  "swap_total": 51539607552, // SWAP 空间
-  "version": "0.0.1-rust", //版本信息无校验，可随意填入
-  "virtualization": "None" // 虚拟化类型，可随意填入
+  "jsonrpc": "2.0",
+  "id": "request-id",
+  "method": "agent.basicInfo",
+  "params": {}
 }
 ```
 
-## 2. 实时监控数据上报接口
+请求头为 `Content-Type: application/json`。请求体可以使用 gzip 压缩，并设置 `Content-Encoding: gzip`。
 
-- 端点： `POST /api/clients/report?token={token}`
+## 基础信息
 
-- Payload：
+调用 `agent.basicInfo`，建议在启动时和之后每隔 5-30 分钟调用一次：
 
 ```json
 {
-  "cpu": {
-    "usage": 12.5 // CPU 占用率
-  },
-  "ram": {
-    "total": 1024, // 内存总空间
-    "used": 512 // 已用内存空间
-  },
-  "swap": {
-    "total": 1024, // SWAP 总空间
-    "used": 512 // 已用 SWAP 空间
-  },
-  "load": {
-    "load1": 0.1, // 即时负载
-    "load5": 0,
-    "load15": 0
-  },
-  "disk": {
-    "total":10, // 总磁盘空间
-    "used": 2 // 已用磁盘空间
-  },
-  "network": {
-    "up": 1, // 上传速度
-    "down": 1, // 下载速度
-    "totalUp": 1024, //总上传流量
-    "totalDown": 1024 // 总下载流量
-  },
-  "connections": {
-    "tcp": 12, // TCP 连接数
-    "udp": 1 // UDP 连接数
-  },
-  "uptime": 10000, // 已开机时长，单位：秒
-  "process": 10, // 进程数量
-  "message": "错误或状态信息" // 将会显示在主页，可公开访问，请勿携带敏感信息
-}
-```
-
-## 3. Ping 任务列表获取接口
-
-- 端点： `GET /api/clients/ping/tasks?token={token}`
-
-- 响应值：
-```json
-[
-  {
-    "id": 1, // Ping Task ID
-    "name": "Ping CF", // 任务名称
-    "clients": [
-      "866fb297-20db-46fd-882f-57f73810ad12",
-      "eb735cf1-1a4b-47c6-ba00-bde261fde09e"
-    ], // 分配了该任务的节点，该字段可忽略
-    "type": "icmp", // Ping 类型， ICMP / TCP / HTTP
-    "target": "1.1.1.1", // Ping 目标 1.1.1.1 | 1.1.1.1:80 | https://1.1.1.1
-    "interval": 2 // 循环执行任务间隔
+  "jsonrpc": "2.0",
+  "id": "basic-info-1",
+  "method": "agent.basicInfo",
+  "params": {
+    "info": {
+      "arch": "amd64",
+      "cpu_cores": 12,
+      "cpu_physical_cores": 6,
+      "cpu_name": "AMD Ryzen 9 9950X3D",
+      "disk_total": 1099511627776,
+      "gpu_name": "NVIDIA GeForce RTX 5090",
+      "ipv4": "1.1.1.1",
+      "ipv6": "2606:4700:4700::1111",
+      "mem_total": 137438953472,
+      "os": "Linux",
+      "kernel_version": "6.8.0",
+      "swap_total": 51539607552,
+      "version": "custom-agent",
+      "virtualization": "None"
+    }
   }
-]
+}
 ```
 
-## 4. Ping 任务执行结果上传接口
+## 实时监控数据
 
-- 端点： `POST /api/clients/ping/result?token={token}`
-
-- Payload:
+调用 `agent.report`，建议每 5-8 秒调用一次。`ack_event_ids` 用于确认已处理的服务端事件：
 
 ```json
 {
-  "task_id": 1, // Ping Task ID
-  "value": 22, // Ping 值，单位 ms
-  "ping_type": "icmp", // Ping 类型
-  "finished_at": "2026-02-21T23:29:10+08:00" // Ping 时间
+  "jsonrpc": "2.0",
+  "id": "report-1",
+  "method": "agent.report",
+  "params": {
+    "report": {
+      "cpu": {"usage": 12.5},
+      "ram": {"total": 1024, "used": 512},
+      "swap": {"total": 1024, "used": 512},
+      "load": {"load1": 0.1, "load5": 0, "load15": 0},
+      "disk": {"total": 10, "used": 2},
+      "network": {"up": 1, "down": 1, "totalUp": 1024, "totalDown": 1024},
+      "connections": {"tcp": 12, "udp": 1},
+      "uptime": 10000,
+      "process": 10,
+      "message": "状态信息"
+    },
+    "ack_event_ids": []
+  }
 }
 ```
+
+## 拉取事件
+
+不支持 WebSocket 的设备应定时调用 `agent.pull`。服务端会在响应的 `result.events` 中返回 `agent.ping`、`agent.exec`、`agent.message`、`agent.event` 和 `agent.terminal.request` 事件：
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "pull-1",
+  "method": "agent.pull",
+  "params": {
+    "capabilities": ["ping", "exec"],
+    "ack_event_ids": []
+  }
+}
+```
+
+探测结果使用 `agent.pingResult` 上报，远程执行结果使用 `agent.taskResult` 上报。两者都发送到同一个 `/api/clients/v2/rpc` 端点。
