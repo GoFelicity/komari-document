@@ -19,19 +19,19 @@ Planned removal of legacy theme fields from `/api/public`:
 - `record_preserve_time`
 - `ping_record_preserve_time`
 
-### 1.4.0
+### Agent v2-only
 
-Planned removal of the Agent v1 protocol and its endpoints:
+The Agent v1 protocol has been officially retired. The following endpoints have been removed:
 
 - `GET /api/clients/report`
 - `POST /api/clients/report`
 - `POST /api/clients/uploadBasicInfo`
 - `POST /api/clients/task/result`
 
-Planned removal of the following legacy endpoints:
+Agents must use protocol/v2 and `/api/clients/v2/rpc` for `agent.report`, `agent.basicInfo`, `agent.pingResult`, and `agent.taskResult`.
+
+The following legacy endpoints remain a separate compatibility cleanup item:
 
 - `/api/records/*`
 - `/api/clients`
 - `/api/recent/:uuid`
-
-The Agent v1 Ping payload will also be removed. Agents should migrate to protocol/v2 and `/api/clients/v2/rpc`.

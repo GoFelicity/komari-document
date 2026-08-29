@@ -24,15 +24,14 @@ Komari Agent 是一个轻量级的系统监控代理程序，通过 WebSocket �
 
 ## 信息上报机制
 
-### 协议版本与目录约定
+### 协议与目录约定
 
 Agent 侧协议定义归档在 `komari-agent/protocol`：
 
-- `protocol/v1`：旧版兼容协议。实时上报直接发送 report JSON；基础信息、任务结果等仍使用独立 HTTP API。
-- `protocol/v2`：服务端版本 >= `1.2.1` 可用，当前默认协议，基于 JSON-RPC 2.0，统一承载上报、任务、消息与事件。
+- `protocol/v2`：当前唯一协议，基于 JSON-RPC 2.0，统一承载上报、任务、消息与事件。
 - `protocol/transport`：传输辅助能力，例如 gzip 压缩。
 
-默认 `--protocol-version=2`。可通过 `AGENT_PROTOCOL_VERSION` 或配置文件中的 `protocol_version` 指定版本。v2 默认开启压缩；如需禁用可使用 `--disable-compression` / `AGENT_DISABLE_COMPRESSION`。
+Agent 始终使用 v2。v2 默认开启压缩；如需禁用可使用 `--disable-compression` / `AGENT_DISABLE_COMPRESSION`。
 
 v2 主通道：
 
@@ -154,7 +153,7 @@ POST 响应表示本次 JSON-RPC 请求是否处理成功，也可以携带服�
 | `agent.pingResult` 探测结果上报     | 支持                                         | 支持                                                |
 | `agent.taskResult` 远程执行结果上报 | 支持 POST                                    | 支持                                                |
 | `agent.exec` 远程执行下发           | 服务器主动推送                               | 需要轮询补齐，否则不可用                            |
-| `agent.ping` 探测任务下发           | 服务器主动推送                               | 可复用 `/api/clients/ping/tasks` 轮询或新增 v2 pull |
+| `agent.ping` 探测任务下发           | 服务器主动推送                               | 通过 `agent.pull` 拉取待处理事件                   |
 | `agent.message` / `agent.event`     | 服务器主动推送                               | 需要轮询补齐，否则不可用                            |
 | `agent.terminal.request`            | 服务器主动推送请求，终端流量走独立 WebSocket | fallback 下不可实时推送；终端本身仍依赖 WebSocket   |
 
@@ -242,15 +241,6 @@ Server response：
 
 服务端需要保证事件下发至少一次，Agent 需要按 `id` 去重并保持处理幂等。网络错误、响应丢失或 ack 丢失时，Agent 可能重复收到同一个事件。
 
-#### 兼容方案
-
-如果短期不实现 `agent.pull`，可先使用现有独立接口：
-
-- Ping 任务：Agent 周期性请求 `GET /api/clients/ping/tasks?token={token}`，本地按任务 interval 调度，结果通过 `agent.pingResult` 或 `POST /api/clients/ping/result` 上报。
-- 远程执行：当前没有 Agent 侧拉取接口；fallback 状态下应在管理端标记远程执行不可用，或新增拉取接口。
-
-如果短期只需要“WebSocket 不可用时仍上报监控数据”，可以先实现兼容方案，并明确 fallback 下远程执行和终端不可用。
-
 #### 在线状态与 UI 表示
 
 服务端应区分以下状态，避免 POST fallback 节点被误判为完全离线：
@@ -283,7 +273,6 @@ Server response：
 
 #### 接口
 
-- **v1 端点**: `POST /api/clients/uploadBasicInfo?token={token}`
 - **v2 端点**: `POST /api/clients/v2/rpc?token={token}`，method 为 `agent.basicInfo`
 - **频率**: 不建议太高，5-30分钟最佳
 
@@ -320,8 +309,6 @@ Server response：
 
 #### 接口
 
-- **v1 WebSocket 端点**: `ws://server/api/clients/report?token={token}` (或 wss)
-- **v1 POST 端点**: `POST /api/clients/report?token={token}`
 - **v2 WebSocket 端点**: `ws://server/api/clients/v2/rpc?token={token}` (或 wss)，method 为 `agent.report`
 - **v2 POST fallback 端点**: `POST /api/clients/v2/rpc?token={token}`，method 为 `agent.report`
 
@@ -414,7 +401,7 @@ Agent 通过 WebSocket 连接接收服务器下发的事件，通过message字�
 
 #### 远程执行上报端点
 
-`POST /api/clients/task/result?token={token}`
+`POST /api/clients/v2/rpc?token={token}`，method 为 `agent.taskResult`
 
 ### 2. 网络探测任务 (Ping Task)
 
@@ -499,8 +486,7 @@ Agent 通过 WebSocket 连接接收服务器下发的事件，通过message字�
 
 - 启动时尝试建立 WebSocket 连接
 - 连接失败时按配置的间隔重试
-- v1 或未启用 fallback 时，超过最大重试次数后可退出主连接循环
-- v2 启用 POST fallback 时，超过最大重试次数后进入 `post_fallback`，并在后台继续尝试恢复 WebSocket
+- 超过最大重试次数后进入 `post_fallback`，并在后台继续尝试恢复 WebSocket
 
 #### 断线重连
 

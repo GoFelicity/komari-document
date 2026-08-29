@@ -6,11 +6,10 @@ Komari Agent is a lightweight monitoring client that reports system information 
 
 Agent protocol definitions live in `komari-agent/protocol`:
 
-- `protocol/v1`: compatibility protocol. Real-time reports are sent as report JSON, while basic information and task results use separate HTTP APIs.
-- `protocol/v2`: default protocol for server versions `1.2.1` and later. It uses JSON-RPC 2.0 for reports, tasks, messages, and events.
+- `protocol/v2`: the only supported protocol. It uses JSON-RPC 2.0 for reports, tasks, messages, and events.
 - `protocol/transport`: shared transport helpers such as gzip compression.
 
-The default is `--protocol-version=2`. It can also be set with `AGENT_PROTOCOL_VERSION` or the configuration file.
+The agent always uses protocol/v2.
 
 ## v2 Endpoints
 
@@ -51,16 +50,10 @@ Common Server-to-Agent methods:
 
 The agent reports static system information at startup and then periodically.
 
-v1 endpoint:
+Endpoint:
 
 ```text
-POST /api/clients/uploadBasicInfo?token={token}
-```
-
-v2 endpoint:
-
-```text
-POST /api/clients/v2/rpc?token={token}
+POST /api/clients/v2/rpc?token={token}, method `agent.basicInfo`
 ```
 
 Example payload:
