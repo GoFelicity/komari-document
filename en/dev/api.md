@@ -500,7 +500,6 @@ curl -s -X POST "$BASE/api/admin/task/exec" \
 | Method | Endpoint | Description |
 | --- | --- | --- |
 | `GET/POST` | `/api/admin/settings/` | Read or update settings. |
-| `GET/POST` | `/api/admin/settings/xtermjs` | Read or update xterm.js settings. |
 | `GET/POST` | `/api/admin/settings/message-sender` | Read or update message providers. |
 | `GET/POST` | `/api/admin/settings/oidc` | Read or update OIDC providers. |
 
@@ -853,7 +852,6 @@ Anonymous visitors may call:
 public:getMe
 public:getPublicSettings
 public:getVersion
-public:recordVisitorEvent
 ```
 
 A valid temporary share cookie also allows anonymous `public:*` calls.
@@ -945,7 +943,6 @@ Parameters:
 | `public:getRecordsByUUID` | `{ uuid, load_type?, hours? }` | Projected load records. |
 | `public:getPingRecords` | `{ uuid?, task_id?, hours? }` | Ping records and task summaries. |
 | `public:getPublicPingTasks` | None | Public ping tasks. |
-| `public:recordVisitorEvent` | `{ event, path?, route?, target?, detail? }` | Visitor audit status. |
 | `public:listMetricDefinitions` | None | Metric definitions. |
 | `public:queryMetrics` | Metric query object | Metric series. |
 | `public:getPingMetricStats` | Ping metric query object | Aggregated ping statistics. |
@@ -977,8 +974,6 @@ All methods in this section require the `admin` role.
 | `admin:deleteAllSessions` | None |
 | `admin:getSettings` | None |
 | `admin:editSettings` | Partial settings object |
-| `admin:getXtermjsSettings` | None |
-| `admin:setXtermjsSettings` | xterm.js settings object |
 
 ### 14.3 Tasks
 

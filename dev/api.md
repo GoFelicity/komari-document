@@ -960,36 +960,6 @@ curl -s \
 }
 ```
 
-#### 5.3.3 xterm.js 设置
-
-**接口：**
-
-- `GET /api/admin/settings/xtermjs`
-- `POST /api/admin/settings/xtermjs`
-
-```bash
-curl -s \
-  -H "Authorization: Bearer $KOMARI_API_KEY" \
-  "$BASE/api/admin/settings/xtermjs"
-
-curl -s \
-  -H "Authorization: Bearer $KOMARI_API_KEY" \
-  -X POST "$BASE/api/admin/settings/xtermjs" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "terminalOptions": {
-      "cursorBlink": true,
-      "convertEol": true,
-      "fontFamily": "monospace",
-      "fontSize": 16,
-      "scrollback": 5000
-    },
-    "terminalPadding": 16,
-    "transparentBackground": false,
-    "customCss": ""
-  }'
-```
-
 ### 5.4 Provider 配置
 
 #### 5.4.1 消息发送 Provider
@@ -2288,7 +2258,6 @@ body.params.token
 public:getMe
 public:getPublicSettings
 public:getVersion
-public:recordVisitorEvent
 ```
 
 持有有效 `temp_key` 的匿名访客可继续调用 `public:*` 方法。
@@ -2721,39 +2690,7 @@ Public 方法对 guest 开放，返回内容会自动过滤 Hidden 节点和敏�
 
 **返回：** `{ id, weight, name, clients, default_on, type, interval }[]`。
 
-### 13.9 `public:recordVisitorEvent`
-
-**参数：**
-
-| 字段        | 类型     | 必填 | 说明                     |
-| ----------- | -------- | ---- | ------------------------ |
-| `event`     | `string` | 是   | 事件名，例如 `page_view` |
-| `action`    | `string` | 否   | `event` 的别名           |
-| `operation` | `string` | 否   | `event` 的别名           |
-| `path`      | `string` | 否   | 前端路径                 |
-| `route`     | `string` | 否   | 路由名                   |
-| `target`    | `string` | 否   | 目标标识                 |
-| `detail`    | `object` | 否   | 有长度限制的元数据       |
-
-```json
-{
-  "jsonrpc": "2.0",
-  "method": "public:recordVisitorEvent",
-  "params": {
-    "event": "node_open",
-    "path": "/",
-    "target": "d4c8d9a1-4ec5-4c1b-9b95-4c1c8f930b0d",
-    "detail": {
-      "source": "node-card"
-    }
-  },
-  "id": 1
-}
-```
-
-限流为每 IP 每分钟 30 次，突发 10 次。
-
-### 13.10 `public:listMetricDefinitions`
+### 13.9 `public:listMetricDefinitions`
 
 返回所有指标定义和保留策略。
 
@@ -2765,7 +2702,7 @@ Public 方法对 guest 开放，返回内容会自动过滤 Hidden 节点和敏�
 }
 ```
 
-### 13.11 `public:queryMetrics`
+### 13.10 `public:queryMetrics`
 
 **参数：**
 
@@ -2817,7 +2754,7 @@ Public 方法对 guest 开放，返回内容会自动过滤 Hidden 节点和敏�
 }
 ```
 
-### 13.12 `public:getPingMetricStats`
+### 13.11 `public:getPingMetricStats`
 
 **参数：**
 
@@ -2990,8 +2927,6 @@ Admin 方法仅管理员可调用。下列示例均可通过 `/api/rpc2`、sessi
 | `admin:deleteAllSessions`  | -                 | `null`                                       |
 | `admin:getSettings`        | -                 | 设置对象                                     |
 | `admin:editSettings`       | 部分设置键值      | `null` 或 `{ restart_required, guide_path }` |
-| `admin:getXtermjsSettings` | -                 | `XtermJSSettings`                            |
-| `admin:setXtermjsSettings` | `XtermJSSettings` | 归一化后的设置                               |
 
 删除会话：
 
@@ -3017,28 +2952,6 @@ Admin 方法仅管理员可调用。下列示例均可通过 `/api/rpc2`、sessi
     "private_site": true
   },
   "id": 2
-}
-```
-
-更新 xterm.js：
-
-```json
-{
-  "jsonrpc": "2.0",
-  "method": "admin:setXtermjsSettings",
-  "params": {
-    "terminalOptions": {
-      "cursorBlink": true,
-      "convertEol": true,
-      "fontFamily": "monospace",
-      "fontSize": 16,
-      "scrollback": 5000
-    },
-    "terminalPadding": 16,
-    "transparentBackground": false,
-    "customCss": ""
-  },
-  "id": 3
 }
 ```
 
