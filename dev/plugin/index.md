@@ -2,7 +2,7 @@
 
 ## 说明
 
-Komari 支持通过 **JavaScript 插件** 扩展服务端能力。插件是一个 ZIP 包，包含清单文件（`komari-plugin.json`）和入口脚本（默认 `script.js`）。插件在服务端进程中运行于独立的 goja JS 运行时（沙箱），可以注册 HTTP 路由、拦截 HTTP 请求/响应、调用系统 RPC、注册自己的 RPC 方法、声明配置项并注入管理页面。
+Komari 支持通过 **JavaScript 插件** 扩展服务端能力。插件是一个 ZIP 包，包含清单文件（`komari-plugin.json`）和入口脚本（默认 `script.js`）。插件在服务端进程中运行于独立的 MoeJS JavaScript 运行时，可以注册 HTTP 路由、拦截 HTTP 请求/响应、调用系统 RPC、注册自己的 RPC 方法、声明配置项并注入管理页面。
 
 ::: warning 安全提示
 插件将继承 Komari 的系统权限，且可能申请访问文件系统、执行子进程、监听端口等敏感能力。只安装你信任的插件；安装第三方插件前请仔细阅读其声明的权限。
@@ -342,28 +342,49 @@ async function unload() {
 
 ## 4. JavaScript 运行时与兼容模块
 
-插件运行在独立的 goja JavaScript 运行时中，支持 CommonJS `require()`、Promise/async-await、事件循环和常用 Web API。它不是浏览器，也不是完整 Node.js；同名接口不一定具备与浏览器或 Node.js 完全一致的行为。
+插件运行在独立的 [MoeJS](https://github.com/Calcium-Ion/moejs) JavaScript 运行时中，支持 CommonJS `require()`、Promise/async-await、事件循环和常用 Web API。兼容模块由 Komari 提供；它不是浏览器，也不是完整 Node.js，同名接口不一定具备完全一致的行为。
 
 无需额外权限即可使用：
 
 | 类别 | 内容 |
 | --- | --- |
 | 基础接口 | `console`、`setTimeout/setInterval/setImmediate` 及对应 `clear`、`queueMicrotask` |
+| 模块加载 | CommonJS `require()`；插件文件模块和 `server` 模块 |
 | 网络请求 | `fetch`、`XMLHttpRequest` |
-| 常驻模块 | `buffer`、`url`、`util` |
-| 文件访问 | plugin 代码目录和 `data/plugin-data/<short>`；后者通过 `__storageDir__` 访问（需 `node: true`） |
+| Web 兼容对象 | `URL`、`URLSearchParams`、`Headers`、`Request`、`Response`、`Blob`、`File`、`FormData`、`AbortController/AbortSignal`、`EventTarget/Event` 等 |
+| 常驻模块 | `buffer`、`url`、`util`（也支持 `node:` 前缀） |
 
-在 manifest 中设置 `permissions.node: true` 后，运行时还会注入 `Buffer`、`process`、`global`、`__dirname`、`__filename`，并提供以下 Node.js 兼容模块：
+未开启 Node 兼容模式时，可使用 `const { Buffer } = require("buffer")`；此时不注入全局 `Buffer`。本地 `buffer` 实现包含 `from/alloc/concat/isBuffer/byteLength` 等常用方法；`util` 提供基础的 `format/inspect/promisify/callbackify/inherits/types`，但不保证完整 Node.js 兼容性。
+
+在 manifest 中设置 `permissions.node: true` 后，运行时还会注入 `Buffer`、`process`、`global`、`__dirname`、`__filename`、`__storageDir__`，并提供以下兼容模块。模块名同时支持普通名称和 `node:` 前缀。
 
 | 模块 | 说明 |
 | --- | --- |
-| `events`、`stream`、`path`、`os`、`process` | 事件、流、路径、系统信息和进程接口 |
+| `events`、`stream`、`stream/promises`、`path`、`os`、`process` | 事件、Node 风格流、路径、系统信息和进程接口；不等同于 Web Streams |
 | `fs` | 文件读写；默认限制在插件代码目录和 `__storageDir__`，越界需要 `allowAllFileAccess` |
 | `child_process` | 执行子进程；需要 `allowExec` |
-| `net`、`http` | TCP/HTTP；Server 监听端口需要 `allowListen`，默认绑定 `127.0.0.1` |
+| `net`、`http` | TCP/HTTP；Server 监听端口需要 `allowListen`，默认绑定 `127.0.0.1`；出站连接不需要此权限 |
+| `tls` | 部分实现：`connect(options, callback?)` / `createConnection` 客户端，支持 `host/port/servername/ca/socket`；不提供 TLS server |
 | `crypto` | 哈希、随机数、密钥派生、AES/ChaCha20-Poly1305 和常用签名验签 |
 
-运行时当前不提供浏览器 DOM、`WebSocket`、`EventSource`、Web Streams、ESM `import/export`，也不提供完整的 `https`、`tls`、`dns`、`zlib`、`worker_threads` 等 Node 核心模块。`process.memoryUsage()`、`cpuUsage()` 等指标反映整个 Komari 进程，不是单个插件的资源占用。
+`tls` 客户端使用证书校验，最低 TLS 1.2；可通过 PEM 字符串 `ca` 指定信任证书，或通过 `socket` 升级现有 `net.Socket`（需提供服务器名）。不要依赖 Node.js 的所有 TLS 选项，例如 `rejectUnauthorized: false` 不会关闭校验。HTTP/HTTPS 请求通常直接使用 `fetch`；内置模块没有注册 `https`。
+
+**模块加载与打包：**
+
+- 入口脚本作为普通脚本执行，生命周期函数应定义在全局；入口不是 CommonJS wrapper，不注入 `module` / `exports`。被 `require()` 加载的文件才有 `exports/require/module/__filename/__dirname`。
+- 顶层相对 `require("./lib.js")` 从插件代码目录解析，不随 manifest 的自定义入口子目录变化；子模块的相对路径从该模块所在目录解析。支持 `node_modules`、`.js` / `.json`、`package.json` 的 `main` 和目录 `index.js/index.json`，并缓存已加载模块。
+- 默认会校验路径穿越和软链接。`require()` 只在代码目录内解析，不因 `__storageDir__` 存在就允许从长期数据目录加载模块；`fs` 在 Node 模式下可读写这两个受限根目录。放开目录限制需要 `allowAllFileAccess`。
+- 不支持 `package.json` 的 `exports/imports/type` 解析规则或 Node 原生扩展（`.node`）。当前插件加载链路不提供 ESM `import/export` 加载器，也不直接执行 TypeScript。发布时应编译为普通 JavaScript 入口，并将依赖打包或随 ZIP 提供可由 CommonJS 加载的文件；npm 包依赖的宿主 API 仍须在上述兼容范围内。
+
+**兼容性限制：**
+
+插件可扩展 `Reflect` 等内建对象及其原型，修改仅影响当前运行时，不会共享到其他插件。
+
+- 同一插件的 JavaScript 回调在其事件循环上串行执行。Promise/async-await 不会使同步 CPU 工作并行；同步死循环仍受执行超时中断。
+- timer 返回数字句柄，不提供 Node 的 `ref/unref/refresh/hasRef`；`setImmediate` 使用零延迟 timer，不保证 Node.js 的完整 phase 顺序。
+- `fetch` 的请求/响应 body 完整缓冲，受 HTTP body 上限约束；`Response.body` 为 `null`，`Blob.stream()` 不是标准 Web ReadableStream。XHR 同步模式会阻塞当前插件事件循环。
+- 不提供浏览器 DOM、全局 `WebSocket` 构造函数、`EventSource` 或 Web Streams；接收 WebSocket 连接可使用下文的 `req.upgradeWebSocket()`。`dns`、`zlib`、`worker_threads` 等核心模块没有内置注册。
+- `process.memoryUsage()`、`cpuUsage()` 等指标反映整个 Komari 进程，不是单个插件的资源占用。独立 VM 和文件访问限制不等于操作系统级进程隔离。
 
 ## 5. `server` 模块
 
@@ -383,7 +404,7 @@ const server = require("server");
 | --------- | ------------------------------------- | ---- | ----------------------------------------------------------------- |
 | `method`  | `string`                              | 是   | HTTP 方法，会转为大写；不能为空                                   |
 | `path`    | `string`                              | 是   | 路由路径，必须以 `/` 开头                                         |
-| `handler` | `(req, res) => void \| Promise<void>` | 是   | 请求处理器；可以返回 Promise，但必须最终调用 `res.end()` 完成响应 |
+| `handler` | `(req, res) => void \| Promise<void>` | 是   | 请求处理器；可以返回 Promise，通过 `res.end()` 完成 HTTP 响应，或通过 `req.upgradeWebSocket()` 升级连接 |
 
 **返回：** `undefined`。
 
@@ -397,6 +418,7 @@ const server = require("server");
 | `query`   | `Record<string,string>`             | query 参数；同名多个值以逗号连接 |
 | `body`    | `string`                            | 请求体文本                       |
 | `context` | `RequestContext`                    | 调用者与网络信息                 |
+| `upgradeWebSocket()` | `() => Promise<RouteWebSocket>` | 将当前 GET 请求升级为 WebSocket，见下文 |
 
 **`req.context` 对象：**
 
@@ -489,7 +511,68 @@ function load() {
 }
 ```
 
-卸载后路由槽仍保留，但请求返回 `404`。非流式 handler 的执行超时为 `permissions.timeout` 秒，超时返回 `504`。
+卸载后路由槽仍保留，但请求返回 `404`。未升级为 WebSocket 的非流式 handler 等待超时为 `permissions.timeout` 秒，超时返回 `504`。
+
+#### 5.1.1 `req.upgradeWebSocket()`
+
+**说明：** 将当前 GET 请求升级为 WebSocket，使用 Komari 已有的 HTTP 监听端口接收连接，不需要注册 `WS` 方法。
+
+**权限：** `allowRoutes`；不要求 `node`、`allowListen` 或 `allowHooks`。
+
+**参数：** 无。
+
+**返回：** `Promise<RouteWebSocket>`。成功时连接已打开，失败时 reject；不需要等待 `onopen`。
+
+**连接对象：**
+
+| 成员 | 类型 | 说明 |
+| ---- | ---- | ---- |
+| `send(data)` | `(string \| ArrayBuffer \| ArrayBufferView) => void` | 将消息加入发送队列；字符串为文本帧，二进制数据为二进制帧 |
+| `close(code?, reason?)` | `(number?, string?) => void` | 发起关闭；默认 `1000` 和空字符串，重复关闭不重复执行 |
+| `readyState` | `number`，只读 | `1`：已打开；`2`：关闭中；`3`：已关闭 |
+| `onmessage` | `(event) => void` | `event.data` 为文本字符串或二进制 `ArrayBuffer` |
+| `onerror` | `(event) => void` | `event.message` 为错误说明；连接发生致命错误后关闭 |
+| `onclose` | `(event) => void` | `event.code`、`event.reason`、`event.wasClean` 表示关闭码、原因和是否正常完成关闭握手 |
+
+**示例：**
+
+```js
+const server = require("server");
+
+function load() {
+  server.route("GET", "/socket", async (req, res) => {
+    // 需要鉴权时，在升级前检查 req.context.principal。
+    const ws = await req.upgradeWebSocket();
+    ws.onmessage = ({ data }) => {
+      ws.send(data);
+    };
+    ws.onerror = ({ message }) => {
+      console.error("WebSocket error:", message);
+    };
+    ws.onclose = ({ code, reason, wasClean }) => {
+      console.log("WebSocket closed:", code, reason, wasClean);
+    };
+    ws.send("connected");
+    ws.send(new Uint8Array([1, 2, 3]));
+  });
+}
+```
+
+**升级与响应：**
+
+- 仅支持 GET WebSocket 握手请求。必须在 `res.write()`、`res.end()` 或设置 `res.streaming = true` 之前升级，同一个请求不能重复升级。
+- 升级成功后不要调用 `res.end()`，也不要再写入 HTTP 响应体或修改响应头。升级前设置的 HTTP 响应头不会作为自定义握手响应头传递。
+- 非 WebSocket 请求等本地校验失败时，可以 catch 后返回普通 HTTP 响应；实际握手失败时可能已发送错误响应或接管连接，不应再尝试补写 HTTP 响应。
+- 使用服务端已有的 Origin 校验策略，但 Origin 校验不等于鉴权。应在升级前通过 `req.context.principal` 检查身份与角色，不满足要求时直接返回 HTTP 错误；路径位于 `/api/admin` 下也不会自动获得管理员权限检查。
+
+**消息与生命周期：**
+
+- 通过属性赋值注册回调，不使用 `.on()`；这不是完整的浏览器 WebSocket 或 Node.js `ws` 接口，也不提供客户端主动连接能力。
+- `send()` 接受 `ArrayBuffer`、TypedArray、DataView，以及可用时的 `Buffer`。二进制数据在入队时复制，视图只发送自身字节范围；修改原数据不影响已入队消息。
+- `send()` 返回 `undefined`，不返回 Promise，也不表示对端已收到。类型错误、连接非打开状态、消息过大或队列满时同步抛错；网络错误通过 `onerror` 通知，随后触发一次 `onclose`。回调执行抛错或超时也会关闭连接。
+- `close()` 的关闭码仅接受 `1000` 或 `3000`–`4999`，原因必须是有效 UTF-8，最多 123 字节；参数无效时抛错。
+- 单条收发消息上限为 8 MiB。待完成发送最多 64 条、总计 16 MiB，包含正在写入的消息；超限的发送会抛错，但连接仍可继续使用。
+- 升级后的连接不受 HTTP 响应等待超时限制，JavaScript 回调仍受 `permissions.timeout` 限制。插件禁用、卸载或重载时连接自动关闭；卸载期间不保证执行 `onclose`，必要清理仍应放在 `unload()` 中。
 
 ### 5.2 `server.static(mount, dir, options?)`
 
@@ -741,7 +824,7 @@ function load() {
 
 #### 5.4.5 WebSocket Hook 接口
 
-WebSocket hook 与 HTTP hook 共用 `allowHooks` 权限。所有 upgrade 都是 GET，因此 WS matcher 只接受路径：
+WebSocket hook 与 HTTP hook 共用 `allowHooks` 权限，用于观察或修改已有连接与消息，不提供主动发送消息的连接对象。插件需要接收自己的 WebSocket 连接时，使用 5.1.1 的 `req.upgradeWebSocket()`；这些连接同样经过 WebSocket hook，但接收连接本身不要求 `allowHooks`。所有 upgrade 都是 GET，因此 WS matcher 只接受路径：
 
 ```js
 server.hook("wsMessage", "/api/clients/v2/rpc", (ctx, msg) => {
@@ -1631,6 +1714,7 @@ curl -s -X POST "$BASE/api/admin/plugin/market/install" \
 | 接口                   | 权限                          |
 | ---------------------- | ----------------------------- |
 | `server.route()`       | `allowRoutes`                 |
+| `req.upgradeWebSocket()` | `allowRoutes`；不要求 Node 兼容模式 |
 | `server.static()`      | `allowRoutes`                 |
 | `server.hook()`        | `allowHooks`                  |
 | `server.injectHTML()`  | `allowHTMLInject`             |
@@ -1638,12 +1722,15 @@ curl -s -X POST "$BASE/api/admin/plugin/market/install" \
 | `server.registerRPC()` | 默认可用                      |
 | `server.getConfig()`   | 默认可用                      |
 | `server.cron()`        | 默认可用                      |
-| 插件目录内文件访问     | 默认可用                      |
-| 插件目录外文件访问     | `allowAllFileAccess`          |
+| 插件代码目录内的 CommonJS 加载 | 默认可用；不要求 `node: true` |
+| 代码目录和 `__storageDir__` 内的 `fs` 读写 | `node: true` |
+| 上述根目录外的文件访问 | `allowAllFileAccess`；`fs` 另需 `node: true` |
 | `child_process`        | `allowExec` 且 `node: true`   |
 | 本地端口监听           | `allowListen` 且 `node: true` |
 
 ### 10.2 时间与容量限制
+
+执行超时用于脚本初始化、函数调用和异步回调等执行边界，不是插件的总运行时长。默认 HTTP 客户端也使用该超时时长；可通过 manifest 的 `permissions.timeout` 调整。
 
 | 项目                     | 当前值 |
 | ------------------------ | ------ |
@@ -1655,6 +1742,9 @@ curl -s -X POST "$BASE/api/admin/plugin/market/install" \
 | WebSocket 单帧 hook 上限 | 8 MiB  |
 | WebSocket 帧 hook 超时   | 1 秒   |
 | WebSocket 连续丢弃上限   | 16 帧  |
+| 路由 WebSocket 单条消息上限 | 8 MiB |
+| 路由 WebSocket 待完成发送上限 | 64 条，合计 16 MiB，包含正在写入的消息 |
+| 路由 WebSocket 关闭原因上限 | 123 UTF-8 字节 |
 
 ### 10.3 错误对象
 
@@ -1699,6 +1789,7 @@ JSON-RPC 常用错误码：
 | 资源                                    | 插件卸载时行为                                         |
 | --------------------------------------- | ------------------------------------------------------ |
 | `server.route()` 注册的 route slot      | 保留，请求返回 `404`                                   |
+| `req.upgradeWebSocket()` 接收的连接 | 关闭；不保证执行 JavaScript `onclose` 回调 |
 | `server.static()` 注册的静态 route slot | 保留，请求返回 `404`                                   |
 | HTTP request/response hook              | 移除                                                   |
 | WebSocket hook                          | 移除                                                   |

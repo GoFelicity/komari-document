@@ -1,12 +1,23 @@
 <script setup lang="ts">
 import DefaultTheme from 'vitepress/theme'
 import HostingBadge from './components/HostingBadge.vue'
+import SponsorBanner from './SponsorBanner.vue'
+import SponsorSlots from './SponsorSlots.vue'
 
 const { Layout } = DefaultTheme
 </script>
 
 <template>
     <Layout>
+        <template #home-hero-before>
+            <SponsorBanner />
+        </template>
+        <template #doc-before>
+            <SponsorBanner />
+        </template>
+        <template #aside-outline-after>
+            <SponsorSlots :count="1" />
+        </template>
         <template #layout-bottom>
             <div class="vp-footer-hosting">
                 <HostingBadge />
