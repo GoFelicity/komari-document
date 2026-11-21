@@ -64,21 +64,24 @@ Browser clients use the `session_token` cookie returned by `/api/login`. Unless 
 
 ### 1.3 Client Token
 
-Agent endpoints accept a node's Client Token in any of these forms:
+Agent endpoints accept a node's Client Token through query parameters:
 
 ```text
 ?token=<client-token>
 ?Authorization=<client-token>
-Authorization: Bearer <client-token>
 ```
 
-The token can also be included in a JSON request body:
+For uncompressed non-GET JSON requests, the token can also be included at the top level of the JSON request body:
 
 ```json
 {
   "token": "<client-token>"
 }
 ```
+
+::: tip Tip
+The `Authorization: Bearer <token>` header is reserved for administrator API Keys and `/api/clients/register` AutoDiscovery keys, not Client Tokens. Pass the Client Token via query parameters when connecting over WebSocket or sending `Content-Encoding: gzip` requests.
+:::
 
 ## 2. Conventions
 
@@ -142,7 +145,7 @@ When `private_site` is enabled, unauthenticated visitors receive:
 }
 ```
 
-The login flow can still use `/api/login`, `/api/me`, `/api/public`, `/api/version`, and `/api/oauth`.
+Whitelisted paths such as `/ping`, `/api/login`, `/api/me`, `/api/public`, `/api/version`, `/api/oauth`, `/api/oauth_callback`, and `/api/recent` remain accessible. Because `/api/rpc2` passes through the global `PrivateSiteMiddleware`, anonymous callers still need a session or a valid `temp_key` cookie when `private_site` is enabled.
 
 ### 2.4 Two-Factor Authentication
 
@@ -153,12 +156,14 @@ These endpoints may require an administrator 2FA code:
 - `POST /api/admin/2fa/disable`
 - Creating a new terminal session with `GET /api/admin/client/:uuid/terminal`
 
-Komari reads the code in this order:
+For REST endpoints, Komari reads the 2FA code in this order:
 
-1. `2fa_code`, `two_factor_code`, or `otp` in the JSON body
-2. The `X-2FA-Code` header
-3. The `X-Two-Factor-Code` header
-4. The `2fa_code`, `two_factor_code`, or `otp` query parameter
+1. The `X-2FA-Code` header
+2. The `X-Two-Factor-Code` header
+3. The `2fa_code`, `two_factor_code`, or `otp` query parameter
+4. `2fa_code`, `two_factor_code`, or `otp` in the JSON body (`POST /api/admin/update/user` reads `2fa_code` from the body directly)
+
+When calling sensitive RPC methods via `/api/rpc2`, Komari checks `params` (`2fa_code`, `two_factor_code`, `otp`) first before falling back to headers and query parameters.
 
 API key requests do not require a separate 2FA code. Accounts without 2FA are also exempt.
 
@@ -306,7 +311,7 @@ OAuth callback. On success, redirects to `/admin/dashboard`.
 
 **Endpoint:** `GET /api/me`
 
-**Authentication:** Optional. Returns Guest information when signed out.
+**Authentication:** Optional (`session_token` cookie only). Returns Guest information when signed out or when called with an API key.
 
 ```bash
 curl -s "$BASE/api/me"
@@ -384,7 +389,7 @@ Only files declared as public plugin pages and files in the same directory are a
 
 | Query parameter | Required | Description |
 | --- | --- | --- |
-| `name` | No | Node name. A random name is generated when omitted. |
+| `name` | No | Node name suffix (the server automatically prepends `Auto-`). A random suffix is generated when omitted. |
 
 ```bash
 curl -s -X POST "$BASE/api/clients/register?name=web-01" \
@@ -397,7 +402,7 @@ curl -s -X POST "$BASE/api/clients/register?name=web-01" \
 
 **Authentication:** Client Token.
 
-The body contains one Agent v2 JSON-RPC request. Gzip-compressed request bodies are supported through `Content-Encoding: gzip`.
+The body contains one Agent v2 JSON-RPC request. Gzip-compressed request bodies are supported through `Content-Encoding: gzip`. When the RPC call returns an error, this HTTP endpoint responds with `400 Bad Request` and the JSON-RPC error payload.
 
 ```bash
 curl -s -X POST "$BASE/api/clients/v2/rpc?token=$CLIENT_TOKEN" \
@@ -423,10 +428,10 @@ The server can push these methods:
 
 - `agent.exec`
 - `agent.ping`
-- `agent.message`
-- `agent.event`
 - `agent.terminal.request`
 - `agent.file`
+- `agent.startupConfig`
+- `agent.switchVersion`
 
 ### 4.4 File Transfer Relay
 
@@ -500,7 +505,6 @@ curl -s -X POST "$BASE/api/admin/task/exec" \
 | Method | Endpoint | Description |
 | --- | --- | --- |
 | `GET/POST` | `/api/admin/settings/` | Read or update settings. |
-| `GET/POST` | `/api/admin/settings/message-sender` | Read or update message providers. |
 | `GET/POST` | `/api/admin/settings/oidc` | Read or update OIDC providers. |
 
 ```bash
@@ -517,14 +521,24 @@ curl -s "$BASE/api/admin/settings/" \
 | `POST` | `/api/admin/session/remove/all` | Remove all sessions. |
 | `GET` | `/api/admin/logs` | Read audit logs. |
 
+`/api/admin/logs` query parameters:
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `limit` | `integer` | `100` | Page size. |
+| `page` | `integer` | `1` | One-based page number. |
+| `msg_type` | `string` | - | Exact message type filter. Requires Komari `1.6.2`. |
+| `q` | `string` | - | Fuzzy search over message, IP, and UUID. Requires Komari `1.6.2`. |
+
+A terminal session produces a single audit record: it is written when the session starts and updated in place on reconnect, suspend, and close with duration, reconnect count, and end reason. Filter it with `msg_type=terminal`.
+
 ### 5.5 Notifications and Ping Tasks
 
 | Method | Endpoint | Description |
 | --- | --- | --- |
-| `GET` | `/api/admin/notification/load/` | List load notifications. |
-| `POST` | `/api/admin/notification/load/add` | Create a load notification. |
-| `POST` | `/api/admin/notification/load/edit` | Edit load notifications. |
-| `POST` | `/api/admin/notification/load/delete` | Delete load notifications. |
+| `GET` | `/api/admin/notification/channels` | List registered notification channels (`webhook`, `Javascript`, and plugin channels). |
+| `GET` | `/api/admin/notification/channel/configuration?id=` | Read a notification channel schema and saved values. |
+| `POST` | `/api/admin/notification/channel/configuration` | Save notification channel configuration (`{ id, data }`). |
 | `GET` | `/api/admin/notification/offline` | List offline notifications. |
 | `POST` | `/api/admin/notification/offline/edit` | Edit offline notifications. |
 | `POST` | `/api/admin/notification/offline/enable` | Enable offline notifications. |
@@ -553,6 +567,7 @@ curl -s "$BASE/api/admin/settings/" \
 | `GET` | `/api/admin/plugin/logs?short=` | Read plugin logs. |
 | `POST` | `/api/admin/plugin/delete` | Delete a plugin. |
 | `GET/POST` | `/api/admin/plugin/configuration` | Read or save plugin configuration. |
+| `GET` | `/api/admin/plugin/:short/*filepath` | Serve admin plugin iframe static files. |
 | `GET/POST/PUT/DELETE` | `/api/admin/plugin/market/sources/:id?` | Manage plugin market sources. |
 | `GET` | `/api/admin/plugin/market/catalog?refresh=` | Read the plugin market catalog. |
 | `POST` | `/api/admin/plugin/market/install` | Install a plugin from the market. |
@@ -611,13 +626,22 @@ Creating a new terminal session requires 2FA. Reconnecting with the existing `re
 
 See [Terminal Reconnection](#_15-6-terminal-frames) for the frame protocol and reconnection flow.
 
-The new session returns:
+The first text frame of a new session is an `assigned` control message:
 
 ```json
 {
+  "type": "assigned",
   "request_id": "0e9f95c9f7f34b27a0ec85a818fec2b3"
 }
 ```
+
+:::warning
+Since Komari `1.6.2` the first message is an `assigned` control frame instead of `{ "request_id": "..." }`. Dispatch on `type` and ignore unknown types to stay compatible with both formats.
+:::
+
+Reconnecting with a `request_id` that another browser already holds is answered with a `terminate` frame followed by a close, rather than an error; non-WebSocket probe requests get `409 Terminal session is already attached` instead. Pass the same `client_id` query parameter on creation and reconnect to let multiple tabs take over the same session.
+
+Within the retention window, sessions can be listed and terminated through [Terminal Session Recovery](#_14-10-terminal-session-recovery).
 
 ### 5.10 2FA and OAuth
 
@@ -840,7 +864,7 @@ API Key > session_token cookie > Client Token > anonymous
 
 ### 9.3 Private Site Whitelist
 
-Anonymous visitors may call:
+Inside the RPC2 dispatcher, the whitelist permits anonymous calls to:
 
 ```text
 public:getMe
@@ -848,11 +872,18 @@ public:getPublicSettings
 public:getVersion
 ```
 
-A valid temporary share cookie also allows anonymous `public:*` calls.
+A valid `temp_key` cookie also allows anonymous `public:*` calls. Note that `/api/rpc2` itself passes through the global `PrivateSiteMiddleware`, so unauthenticated callers without a `temp_key` cookie receive `401` before reaching the dispatcher.
 
 ### 9.4 Sensitive Methods
 
-`admin:exec` is sensitive. Administrators must provide a valid 2FA code unless they authenticate with an API key or do not have 2FA enabled.
+These methods are sensitive:
+
+```text
+admin:exec
+admin:getAgentStartupConfig
+```
+
+Administrators must provide a valid 2FA code unless they authenticate with an API key or do not have 2FA enabled. `admin:getAgentStartupConfig` requires Komari `1.6.0` or later and is sensitive because it returns the Agent's full startup settings, including credentials.
 
 ## 10. Error Codes
 
@@ -994,10 +1025,9 @@ All methods in this section require the `admin` role.
 
 | Method | Parameters |
 | --- | --- |
-| `admin:addLoadNotification` | `{ clients, metric, threshold, ratio, interval, name? }` |
-| `admin:deleteLoadNotification` | `{ id: number[] }` |
-| `admin:editLoadNotification` | `{ notifications: LoadNotification[] }` |
-| `admin:getAllLoadNotifications` | None |
+| `admin:listNotificationChannels` | None |
+| `admin:getNotificationChannelConfiguration` | `{ id }` |
+| `admin:setNotificationChannelConfiguration` | `{ id, data }` |
 | `admin:listOfflineNotifications` | None |
 | `admin:editOfflineNotification` | `OfflineNotification[]` |
 | `admin:enableOfflineNotification` | `string[]` |
@@ -1008,8 +1038,6 @@ All methods in this section require the `admin` role.
 
 | Method | Parameters |
 | --- | --- |
-| `admin:getMessageSenderProvider` | `{ provider? }` |
-| `admin:setMessageSenderProvider` | `{ name, addition }` |
 | `admin:getOidcProvider` | `{ provider? }` |
 | `admin:setOidcProvider` | `{ name, addition }` |
 
@@ -1022,9 +1050,10 @@ All methods in this section require the `admin` role.
 | `admin:dbQuery` | `{ database?, sql, args?, limit? }` |
 | `admin:dbExec` | `{ database?, sql, args? }` |
 | `admin:dbTables` | `{ database? }` |
-| `admin:getLogs` | `{ limit?, page?, msg_type? }` |
+| `admin:getLogs` | `{ limit?, page?, msg_type?, q? }` |
 | `admin:testGeoip` | `{ ip? }` |
 | `admin:testSendMessage` | None |
+| `admin:getLastRunVersion` | None |
 
 ### 14.8 Plugins and Metrics
 
@@ -1073,6 +1102,62 @@ Example:
 
 File contents use the HTTP upload, download, and preview endpoints described in [Node Files](#_5-8-node-files).
 
+### 14.10 Terminal Session Recovery
+
+Requires Komari `1.6.2` or later. These methods list and terminate terminal sessions whose browser side has disconnected but that the server still retains for 5 minutes. Session creation and reconnection are described in [Terminal](#_5-9-terminal).
+
+| Method | Parameters | Result |
+| --- | --- | --- |
+| `admin:listRecoverableTerminalSessions` | `{ uuid? }` | `RecoverableSession[]` |
+| `admin:terminateTerminalSessions` | `{ request_ids?, request_id? }` | `{ terminated: string[] }` |
+
+`RecoverableSession` fields:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `request_id` | `string` | Session ID usable for reconnection. |
+| `uuid` | `string` | Target node. |
+| `agent_connected` | `boolean` | Whether the Agent is still connected; `false` means it is awaiting reconnect. |
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "admin:listRecoverableTerminalSessions",
+  "params": {
+    "uuid": "d4c8d9a1-4ec5-4c1b-9b95-4c1c8f930b0d"
+  },
+  "id": 1
+}
+```
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "admin:terminateTerminalSessions",
+  "params": {
+    "request_ids": ["0e9f95c9f7f34b27a0ec85a818fec2b3"]
+  },
+  "id": 1
+}
+```
+
+Both methods only act on sessions the caller may take over: a regular administrator sees only their own sessions, while an API key sees every session matching `uuid`. Termination is final — the server sends `terminate` to a connected Agent, closes it, and the `request_id` immediately becomes invalid (`404` on reconnect).
+
+### 14.11 Agent Configuration and Version
+
+Backed by the `agent.startupConfig` and `agent.switchVersion` v2 events described in [Server-to-Agent Events](#_15-3-server-to-agent-events).
+
+Both RPCs have shipped since Komari `1.6.0`, but only take effect with Agent `1.6.20` or later. Older Agents ignore the events, so callers receive `Unavailable` or a timeout.
+
+| Method | Parameters | Result |
+| --- | --- | --- |
+| `admin:getAgentStartupConfig` | `{ uuid }` | Flat startup configuration object. |
+| `admin:switchAgentVersion` | `{ uuid, version }` | `{ queued: true }` |
+
+`admin:getAgentStartupConfig` returns every effective startup setting of the Agent process, **including credentials and without redaction**. It is a sensitive method and is audit-logged. The server waits at most 20 seconds.
+
+`admin:switchAgentVersion` accepts `latest`, a version line such as `1.6.*`, an exact version, `snapshot`, or a specific `Snapshot-<timestamp>` tag. It is fire-and-forget: `{ queued: true }` only means the event was delivered. Confirm the result by checking the `version` the node reports afterwards. The Agent restarts itself after installing; containerized Agents skip binary self-update.
+
 ## 15. Agent v2 RPC
 
 Agent v2 uses:
@@ -1082,7 +1167,9 @@ GET /api/clients/v2/rpc?token=<client-token>
 POST /api/clients/v2/rpc?token=<client-token>
 ```
 
-> Behavior baseline: `komari-monitor/komari-agent` `1.5.10`, commit `9e532e0429cd049571e35cf344654181879b33c7`.
+> Behavior baseline: `komari-monitor/komari-agent` `1.6.20`, commit `efe34d5dcb1ce831cffb2b534b9385d1768fbb1f`.
+>
+> `1.5.10` remains supported: it lacks `agent.startupConfig`, `agent.switchVersion`, and the terminal control frames noted per section.
 
 ### 15.1 Transport
 
@@ -1104,6 +1191,9 @@ If WebSocket cannot be established, the Agent enters POST fallback:
 | `agent.taskResult` | `{ task_id, result, exit_code, finished_at }` | `{ status }` |
 | `agent.pull` | `{ capabilities?, ack_event_ids?, last_event_id? }` | `{ events }` |
 | `agent.file.result` | File result object | `{ status }` |
+| `agent.startupConfig.result` | `{ request_id, config?, error? }` | `{ status }` |
+
+Since Agent `1.6.20`, `agent.pull` also advertises the `startup_config` and `switch_version` capabilities alongside `exec`, `ping`, `message`, `event`, `terminal`, and `file`.
 
 On WebSocket, reports, basic info, ping results, and task results are normally sent as notifications without an `id`.
 
@@ -1248,7 +1338,10 @@ An empty command returns `No command provided` with exit code `0`.
   "jsonrpc": "2.0",
   "method": "agent.pull",
   "params": {
-    "capabilities": ["exec", "ping", "message", "event", "terminal", "file"],
+    "capabilities": [
+      "exec", "ping", "message", "event",
+      "terminal", "file", "startup_config", "switch_version"
+    ],
     "ack_event_ids": []
   },
   "id": "pull-1789547400123456789"
@@ -1275,9 +1368,13 @@ Each event contains `id`, `method`, `params`, `created_at`, and `expires_at`.
 | `agent.ping` | `{ ping_task_id, ping_type, ping_target }` | Runs an `icmp`, `tcp`, or `http` probe. | `agent.pingResult` |
 | `agent.terminal.request` | `{ request_id }` | Opens `/api/clients/terminal` with the Client Token. | Terminal WebSocket |
 | `agent.file` | `{ uuid, request_id, op, args? }` | Runs a file control operation. | `agent.file.result` |
+| `agent.startupConfig` | `{ request_id }` | Returns all effective startup settings of the running process. | `agent.startupConfig.result` |
+| `agent.switchVersion` | `{ version }` | Downloads and replaces the binary, then restarts the process. | None |
 | `agent.message` | `{ type, message, data? }` | Logs the message. | None |
 | `agent.event` | `{ type, data? }` | Logs the event. | None |
 | `networkTest.*` | Protocol-defined | Not implemented by Agent 1.5.10. | None |
+
+`agent.startupConfig` and `agent.switchVersion` require Agent `1.6.20` or later. Agent `1.5.10` logs `unknown v2 event method` and ignores them.
 
 #### `agent.exec`
 
@@ -1325,6 +1422,73 @@ Ping behavior:
   }
 }
 ```
+
+#### `agent.startupConfig`
+
+Requires Agent `1.6.20` or later.
+
+The server asks the Agent to return every effective startup setting of the running process. The Agent replies with the `agent.startupConfig.result` event and echoes the `request_id`.
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "agent.startupConfig",
+  "params": {
+    "request_id": "cfg-1789547400123456789"
+  }
+}
+```
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "agent.startupConfig.result",
+  "params": {
+    "request_id": "cfg-1789547400123456789",
+    "config": {
+      "endpoint": "https://monitor.example.com",
+      "token": "<client-token>",
+      "interval": 1.5,
+      "disable_web_ssh": false
+    }
+  }
+}
+```
+
+`config` is a flat object that includes defaults and credentials and is **not redacted**. When the Agent cannot produce a configuration it returns an `error` string instead of `config`. The server waits at most 20 seconds and never reflects the Agent's raw error text, to avoid leaking credentials. The matching admin RPC is `admin:getAgentStartupConfig`, which is marked sensitive.
+
+#### `agent.switchVersion`
+
+Requires Agent `1.6.20` or later.
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "agent.switchVersion",
+  "params": {
+    "version": "1.6.*"
+  }
+}
+```
+
+Accepted `version` values:
+
+| Value | Meaning |
+| --- | --- |
+| `latest` or `*` | Latest stable release. |
+| `1.6.*` or `1.6` | Latest stable release on that version line. |
+| `1.6.20` | Exact version; upgrades or downgrades. |
+| `snapshot` | Latest snapshot build. |
+| `Snapshot-2611190200` | A specific snapshot build. |
+
+Behavior:
+
+- The method has no reply. `{ queued: true }` only means the event was delivered, not that the install succeeded; confirm via the `version` the Agent reports later.
+- Downloads are verified against the SHA-256 `digest` from the GitHub Releases API and rejected above 128 MiB.
+- After a successful install the Agent exits with code `42` and is restarted by systemd, nssm, or the equivalent supervisor.
+- Containerized Agents skip binary self-update and only log a notice; replace the image instead.
+- Agents started with `--disable-web-ssh` ignore the request.
+- The matching admin RPC is `admin:switchAgentVersion`, which requires an online v2-capable Agent.
 
 ### 15.4 File Control Operations
 
@@ -1460,14 +1624,14 @@ Uploads:
 
 ### 15.6 Terminal Frames
 
-Binary browser frames are written directly to the PTY. Text control frames use JSON:
+Since Komari `1.6.2` / Agent `1.6.20`, frames are split by type:
 
-```json
-{
-  "type": "input",
-  "input": "uptime\n"
-}
-```
+- **Binary frames** carry terminal content (PTY input and output) and are forwarded verbatim in both directions.
+- **Text frames** carry control messages, i.e. the JSON below.
+
+Control messages never reach the terminal buffer, and non-JSON text frames are treated as terminal content. Both sides must ignore unknown `type` values, so new message types need no compatibility code. Older Agents understood `input` and `close`; the new protocol still accepts both aliases.
+
+Browser → server:
 
 ```json
 {
@@ -1479,15 +1643,52 @@ Binary browser frames are written directly to the PTY. Text control frames use J
 
 ```json
 {
-  "type": "heartbeat"
+  "type": "heartbeat",
+  "id": "hb-1"
 }
 ```
 
 ```json
 {
-  "type": "close"
+  "type": "terminate"
 }
 ```
+
+Server → browser:
+
+```json
+{
+  "type": "assigned",
+  "request_id": "0e9f95c9f7f34b27a0ec85a818fec2b3"
+}
+```
+
+```json
+{
+  "type": "ready"
+}
+```
+
+```json
+{
+  "type": "abort"
+}
+```
+
+Server → Agent: `resize`, `heartbeat`, `abort`, `terminate`.
+
+Agent → server: `heartbeat` (echoes `id` when present, enabling end-to-end RTT) and `terminate` (the PTY ended, e.g. the user ran `exit`).
+
+Message semantics:
+
+| Message | Direction | Meaning |
+| --- | --- | --- |
+| `assigned` | Server → browser | Session allocated; carries `request_id`, after which reconnection is possible. |
+| `ready` | Server → browser | The peer is attached and forwarding begins. |
+| `abort` | Server → survivor | The peer disconnected unexpectedly; the session enters the retention window awaiting reconnect. |
+| `terminate` | Any direction | Final state; close immediately and never reconnect. |
+| `heartbeat` | Both ways | Keepalive; an echoed `id` from the Agent allows RTT measurement. |
+| `resize` | Browser → Agent | Resize the PTY window. |
 
 Terminal output is always sent back as WebSocket binary frames.
 
@@ -1495,9 +1696,11 @@ Reconnection behavior:
 
 - Both the server and Agent retain a terminal session for 5 minutes.
 - Reconnect with the original `request_id`. Do not create a new session.
-- The browser reconnects first; the server sends `agent.terminal.request` again.
-- The Agent then reconnects to `/api/clients/terminal` with the same `request_id`.
+- On an Agent drop the server sends `abort` to the browser and immediately re-dispatches `agent.terminal.request`.
+- The Agent then reconnects to `/api/clients/terminal` with the same `request_id`; the server sends `ready` once both sides are attached.
 - Reusing the ID reattaches the existing PTY. After the retention window, the session returns `404`.
+
+Agent `1.5.10` and `1.5.11` also retain the PTY for 5 minutes and support reattachment, but they do not understand `abort`, `assigned`, or `ready` and never send `heartbeat`. With those Agents, recovery relies entirely on the server re-dispatching `agent.terminal.request`, and the browser receives no keepalive from the Agent.
 
 ### 15.7 Network Test Support
 

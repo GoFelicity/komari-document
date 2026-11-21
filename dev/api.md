@@ -58,21 +58,24 @@ Authorization: Bearer <api-key>
 
 ### 1.3 使用 Client Token
 
-Agent 接口通过 Client Token 鉴权。支持以下形式：
+Agent 接口通过 Client Token 鉴权。支持以下 Query 形式：
 
 ```text
 ?token=<client-token>
 ?Authorization=<client-token>
-Authorization: Bearer <client-token>
 ```
 
-JSON 请求体也可使用：
+对于未压缩的非 GET JSON 请求体，也可在顶层 JSON 中附带：
 
 ```json
 {
   "token": "<client-token>"
 }
 ```
+
+::: tip 提示
+`Authorization: Bearer <token>` 请求头仅用于管理员 API Key 或 `/api/clients/register` 的 AutoDiscovery Key，不用于 Client Token；若请求体使用 `Content-Encoding: gzip` 压缩或连接 WebSocket，请通过 Query 参数传入 Client Token。
+:::
 
 ## 2. 通用约定
 
@@ -136,7 +139,7 @@ JSON 请求体也可使用：
 }
 ```
 
-登录页所需的 `/api/login`、`/api/me`、`/api/public`、`/api/version`、`/api/oauth` 等接口仍可访问。
+登录页所需的 `/ping`、`/api/login`、`/api/me`、`/api/public`、`/api/version`、`/api/oauth`、`/api/oauth_callback`、`/api/recent` 等白名单路径仍可匿名访问。开启私有站点后，`/api/rpc2` 也会先受私有站点中间件拦截，匿名访客需先登录或持有有效 `temp_key` Cookie 才能访问。
 
 ### 2.4 敏感操作 2FA
 
@@ -147,12 +150,14 @@ JSON 请求体也可使用：
 - `POST /api/admin/2fa/disable`
 - 新建 `GET /api/admin/client/:uuid/terminal` WebSocket 会话时
 
-2FA code 的来源顺序：
+REST 接口的 2FA code 读取顺序：
 
-1. JSON body 的 `2fa_code`、`two_factor_code` 或 `otp`
-2. `X-2FA-Code` 请求头
-3. `X-Two-Factor-Code` 请求头
-4. Query 参数 `2fa_code`、`two_factor_code` 或 `otp`
+1. `X-2FA-Code` 请求头
+2. `X-Two-Factor-Code` 请求头
+3. Query 参数 `2fa_code`、`two_factor_code` 或 `otp`
+4. JSON body 的 `2fa_code`、`two_factor_code` 或 `otp`（`POST /api/admin/update/user` 除外，会直接读取 body 的 `2fa_code`）
+
+通过 `/api/rpc2` 调用敏感 RPC 方法时，则优先读取 `params` 中的 `2fa_code`、`two_factor_code` 或 `otp`，其次再回退到请求头和 Query 参数。
 
 使用 API Key 调用时不需要重复提供 2FA code；未启用 2FA 的管理员也不需要。
 
@@ -334,9 +339,13 @@ OAuth Provider 回调地址。登录成功或绑定成功后重定向到 `/admin
 
 ```bash
 curl -s \
-  -H "Authorization: Bearer $KOMARI_API_KEY" \
+  -b cookies.txt \
   "$BASE/api/me"
 ```
+
+::: info 说明
+`/api/me` 仅识别浏览器登录的 `session_token` Cookie；使用管理员 API Key 调用时会返回 `{"username": "Guest", "logged_in": false}`。
+:::
 
 ### 3.6 节点基础信息
 
@@ -412,7 +421,7 @@ curl -s "$BASE/api/recent/d4c8d9a1-4ec5-4c1b-9b95-4c1c8f930b0d"
 | 参数        | 类型      | 必填 | 默认 | 说明                                                                                              |
 | ----------- | --------- | ---- | ---- | ------------------------------------------------------------------------------------------------- |
 | `uuid`      | `string`  | 是   | -    | Client UUID                                                                                       |
-| `load_type` | `string`  | 否   | 全部 | `cpu`、`ram`、`swap`、`load`、`temp`、`disk`、`network`、`process`、`connections`、`all` 或 `gpu` |
+| `load_type` | `string`  | 否   | 全部 | `cpu`、`ram`、`swap`、`load`、`temp`、`disk`、`network`、`process`、`connections` 或 `all` |
 | `hours`     | `integer` | 否   | `4`  | 回溯小时数                                                                                        |
 
 **响应：**
@@ -429,7 +438,7 @@ curl -s "$BASE/api/recent/d4c8d9a1-4ec5-4c1b-9b95-4c1c8f930b0d"
 }
 ```
 
-未指定 `load_type` 或指定 `all`、`gpu` 时，响应可能包含 `gpu_devices` 和 `has_gpu_data`。
+未指定 `load_type` 或指定 `all` 时，响应可能包含 `gpu_devices` 和 `has_gpu_data`。
 
 ```bash
 curl -s "$BASE/api/records/load?uuid=<uuid>&load_type=cpu&hours=6"
@@ -610,9 +619,9 @@ curl -s "$BASE/api/plugin/status-extension/pages/public.html"
 
 **Query 参数：**
 
-| 参数   | 类型     | 必填 | 说明                     |
-| ------ | -------- | ---- | ------------------------ |
-| `name` | `string` | 否   | 节点名称；省略时自动生成 |
+| 参数   | 类型     | 必填 | 说明                                         |
+| ------ | -------- | ---- | -------------------------------------------- |
+| `name` | `string` | 否   | 节点名称后缀，服务端会自动加上 `Auto-` 前缀；省略时随机生成 |
 
 ```bash
 curl -s -X POST "$BASE/api/clients/register?name=web-01" \
@@ -640,7 +649,7 @@ curl -s -X POST "$BASE/api/clients/register?name=web-01" \
 
 **Content-Type：** `application/json`
 
-请求体为单个 Agent v2 JSON-RPC 请求。支持 `Content-Encoding: gzip`。
+请求体为单个 Agent v2 JSON-RPC 请求。支持 `Content-Encoding: gzip`；若 RPC 执行返回错误，该 HTTP 接口会返回 `400 Bad Request` 与 JSON-RPC 错误对象。
 
 ```bash
 curl -s -X POST "$BASE/api/clients/v2/rpc?token=$CLIENT_TOKEN" \
@@ -668,10 +677,10 @@ Agent v2 方法、参数与事件见 [Agent v2 RPC](#_15-agent-v2-rpc)。
 
 - `agent.exec`
 - `agent.ping`
-- `agent.message`
-- `agent.event`
 - `agent.terminal.request`
-- 文件传输控制事件
+- `agent.file`
+- `agent.startupConfig`
+- `agent.switchVersion`
 
 浏览器或调试工具可使用：
 
@@ -962,37 +971,7 @@ curl -s \
 
 ### 5.4 Provider 配置
 
-#### 5.4.1 消息发送 Provider
-
-**接口：**
-
-- `GET /api/admin/settings/message-sender`
-- `POST /api/admin/settings/message-sender`
-
-读取指定 Provider：
-
-```bash
-curl -s \
-  -H "Authorization: Bearer $KOMARI_API_KEY" \
-  "$BASE/api/admin/settings/message-sender?provider=telegram"
-```
-
-省略 `provider` 时返回可用 Provider 配置模板列表。
-
-保存配置：
-
-```bash
-curl -s \
-  -H "Authorization: Bearer $KOMARI_API_KEY" \
-  -X POST "$BASE/api/admin/settings/message-sender" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "telegram",
-    "addition": "{\"bot_token\":\"...\",\"chat_id\":\"...\"}"
-  }'
-```
-
-#### 5.4.2 OIDC Provider
+#### 5.4.1 OIDC Provider
 
 **接口：**
 
@@ -1013,6 +992,8 @@ curl -s \
     "addition": "{\"client_id\":\"...\",\"client_secret\":\"...\"}"
   }'
 ```
+
+消息发送渠道已迁移至通知渠道接口，见 [5.7.1 通知渠道](#_5-7-1-通知渠道)。
 
 ### 5.5 会话管理
 
@@ -1055,15 +1036,27 @@ curl -s \
 
 **Query 参数：**
 
-| 参数    | 类型      | 默认  | 说明     |
-| ------- | --------- | ----- | -------- |
-| `limit` | `integer` | `100` | 每页数量 |
-| `page`  | `integer` | `1`   | 页码     |
+| 参数       | 类型      | 默认  | 说明                              |
+| ---------- | --------- | ----- | --------------------------------- |
+| `limit`    | `integer` | `100` | 每页数量                          |
+| `page`     | `integer` | `1`   | 页码                              |
+| `msg_type` | `string`  | -     | 按消息类型精确过滤                |
+| `q`        | `string`  | -     | 按消息内容、IP 或 UUID 模糊搜索   |
+
+`msg_type` 与 `q` 需要 Komari `1.6.2` 及以上版本。
 
 ```bash
 curl -s \
   -H "Authorization: Bearer $KOMARI_API_KEY" \
   "$BASE/api/admin/logs?limit=20&page=1"
+```
+
+组合筛选：
+
+```bash
+curl -s \
+  -H "Authorization: Bearer $KOMARI_API_KEY" \
+  "$BASE/api/admin/logs?limit=20&msg_type=terminal&q=203.0.113.10"
 ```
 
 **响应：**
@@ -1079,33 +1072,41 @@ curl -s \
 }
 ```
 
-### 5.7 通知规则
+终端会话在审计日志中只占一条记录：会话建立时写入，重连、挂起、结束时原地更新时长、重连次数与结束原因，可用 `msg_type=terminal` 单独筛选。
 
-#### 5.7.1 负载通知
+### 5.7 通知渠道与规则
 
-| 方法   | 接口                                  | 说明 |
-| ------ | ------------------------------------- | ---- |
-| `GET`  | `/api/admin/notification/load/`       | 列表 |
-| `POST` | `/api/admin/notification/load/add`    | 新建 |
-| `POST` | `/api/admin/notification/load/edit`   | 编辑 |
-| `POST` | `/api/admin/notification/load/delete` | 删除 |
+#### 5.7.1 通知渠道
+
+系统内置 `webhook` 与 `Javascript` 渠道，也支持插件通过 `server.registerNotificationChannel` 动态注册渠道。
+
+| 方法   | 接口                                          | 说明             |
+| ------ | --------------------------------------------- | ---------------- |
+| `GET`  | `/api/admin/notification/channels`            | 已注册渠道列表   |
+| `GET`  | `/api/admin/notification/channel/configuration?id=` | 读取渠道配置与值 |
+| `POST` | `/api/admin/notification/channel/configuration`     | 保存渠道配置     |
 
 ```bash
 curl -s \
   -H "Authorization: Bearer $KOMARI_API_KEY" \
-  -X POST "$BASE/api/admin/notification/load/add" \
+  "$BASE/api/admin/notification/channels"
+
+curl -s \
+  -H "Authorization: Bearer $KOMARI_API_KEY" \
+  "$BASE/api/admin/notification/channel/configuration?id=webhook"
+
+curl -s \
+  -H "Authorization: Bearer $KOMARI_API_KEY" \
+  -X POST "$BASE/api/admin/notification/channel/configuration" \
   -H "Content-Type: application/json" \
   -d '{
-    "name": "CPU high",
-    "clients": ["<uuid>"],
-    "metric": "cpu",
-    "threshold": 90,
-    "ratio": 0.8,
-    "interval": 15
+    "id": "webhook",
+    "data": {
+      "url": "https://example.com/hook",
+      "method": "POST"
+    }
   }'
 ```
-
-`interval` 单位为分钟，范围 `1..240`；`ratio` 范围 `(0,1]`。
 
 #### 5.7.2 离线通知
 
@@ -1226,6 +1227,7 @@ curl -s \
 | `POST` | `/api/admin/plugin/delete`               | 删除插件           |
 | `GET`  | `/api/admin/plugin/configuration?short=` | 配置声明与已保存值 |
 | `POST` | `/api/admin/plugin/configuration`        | 保存配置           |
+| `GET`  | `/api/admin/plugin/:short/*filepath`     | 插件管理页面静态文件 |
 
 ```bash
 curl -s \
@@ -1508,7 +1510,7 @@ curl -s \
   }'
 ```
 
-完整的参数和结果说明见 [Admin RPC 节点文件操作](#_14-12-节点文件操作)。
+完整的参数和结果说明见 [Admin RPC 节点文件操作](#_14-11-节点文件操作)。
 
 #### 5.15.3 上传文件内容
 
@@ -1640,27 +1642,36 @@ ws.onmessage = (event) => {
 };
 ```
 
-服务端首条 JSON 消息返回：
+服务端首条文本帧是 `assigned` 控制消息：
 
 ```json
 {
+  "type": "assigned",
   "request_id": "0e9f95c9f7f34b27a0ec85a818fec2b3"
 }
 ```
 
-后续 WebSocket 文本和二进制帧直接作为终端输入输出转发。
+:::warning 注意
+Komari `1.6.2` 起首条消息由 `{ "request_id": "..." }` 改为带 `type` 的 `assigned` 控制帧。按 `type` 分发、忽略未知类型即可同时兼容新旧格式。
+:::
+
+此后二进制帧是终端内容，文本帧是控制消息，完整帧类型见 [Agent 终端帧](#_15-6-agent-终端帧)。
 
 新建流程：
 
-1. 浏览器连接管理员终端接口，服务端生成 `request_id` 并立即返回。
+1. 浏览器连接管理员终端接口，服务端生成 `request_id` 并立即下发 `assigned`。
 2. 服务端向对应 Agent 下发 `agent.terminal.request` 事件。
 3. Agent 使用 Client Token 连接 `/api/clients/terminal?id=<request_id>`。
-4. 浏览器和 Agent 两侧都连接后，服务端开始双向转发终端数据。
-5. Agent 暂时无法接收请求时，浏览器会收到 `Client offline!` 或等待提示，会话可能被关闭。
+4. 浏览器和 Agent 两侧都连接后，服务端向浏览器下发 `ready`，开始双向转发终端数据。
+5. Agent 离线或事件投递失败时，服务端直接下发 `terminate` 并关闭会话。
+
+:::warning 注意
+Komari `1.6.2` 起不再向浏览器写入 `Client offline!`、`等待被控端连接 waiting for agent...` 等纯文本提示——新协议下非 JSON 文本会被当作终端内容。请以 `assigned`、`ready`、`abort`、`terminate` 四种控制消息判断会话状态。
+:::
 
 #### 5.16.2 浏览器重连
 
-浏览器 WebSocket 断开后，终端会话不会立即销毁。任一侧断开时，服务器会挂起转发并保留会话 5 分钟。
+浏览器 WebSocket 断开后，终端会话不会立即销毁。任一侧断开时，服务器会挂起转发并保留会话 5 分钟，并向仍然在线的一方发送 `abort`。
 
 重连时必须复用原来的 `request_id`：
 
@@ -1681,17 +1692,21 @@ ws.onmessage = (event) => {
 
 - 浏览器重连不要求新的 2FA code。
 - 普通管理员只能重连自己创建的会话；API Key 可以重连匹配 `uuid` 的任意会话。
-- 重连成功后会再次收到 `{ "request_id": "<request_id>" }`。
-- 服务端会重新通知 Agent 回连；Agent 尚未连接时返回 `等待被控端连接 waiting for agent...`。
+- 重连成功后同样会收到 `assigned`；若 Agent 已在位，紧接着收到 `ready`。
+- 服务端会重新通知 Agent 回连，在 Agent 就位前不发送 `ready`。
 - 浏览器和 Agent 都重新连接后，取消清理定时器并继续转发。
+
+同一 `request_id` 已被其他浏览器连接占用时，服务端会直接下发 `terminate` 并关闭连接而不是返回错误；非 WebSocket 探测请求则返回 `409` 和 `Terminal session is already attached`。若需要多标签页共用，可在新建与重连时带上相同的 `client_id` Query 参数，服务端会视为同一浏览器实例并允许接管。
 
 如果 `request_id` 不存在或已经超过 5 分钟，接口返回 `404` 和 `Terminal session not found`。此时不要继续使用旧 ID，需要重新创建会话并重新完成 2FA。
 
 #### 5.16.3 Agent 重连
 
-Agent WebSocket 断开后，服务器会同时挂起并关闭另一端浏览器连接，整个会话进入 5 分钟保留期。恢复顺序是：
+Agent WebSocket 断开后，服务器会保留会话 5 分钟，并向仍然在线的浏览器下发 `abort`，同时立即重新下发 `agent.terminal.request` 以唤醒 Agent 回连。
 
-1. 浏览器先使用原 `request_id` 重新连接管理员终端接口。
+恢复顺序是：
+
+1. 浏览器保持在原连接上等待，或使用原 `request_id` 重新连接管理员终端接口。
 2. 服务器重新向 Agent 下发 `agent.terminal.request`。
 3. Agent 使用相同 Client Token 和原 `request_id` 连接：
 
@@ -1702,18 +1717,20 @@ GET /api/clients/terminal?id=<request_id>
 规则：
 
 - Client Token 对应的 UUID 必须与会话目标节点一致。
-- 会话必须在 5 分钟保留期内，否则返回 `404 Session not found`。
+- 会话必须在 5 分钟保留期内，否则服务端下发 `terminate` 并返回 `404 Session not found`。
 - Agent 重连不会创建新的终端会话或更换 `request_id`。
 - 浏览器尚未重新附加时，Agent 无法单独恢复会话。
-- 浏览器和 Agent 都重新连接后立即恢复双向转发。
+- 浏览器和 Agent 都重新连接后，服务端下发 `ready` 并恢复双向转发。
 
 #### 5.16.4 会话失效
 
 浏览器和 Agent 中任一侧断开后会启动 5 分钟清理计时；两侧在期限内重新连接时取消计时。超过 5 分钟仍未恢复时：
 
 - 删除服务器内存中的终端会话。
-- 关闭浏览器和 Agent 两侧连接。
+- 向两端下发 `terminate` 并关闭连接。
 - 原 `request_id` 失效，后续重连返回 `404`。
+
+保留期内的会话可以通过 [终端会话恢复](#_14-12-终端会话恢复) 中的 RPC 列出并主动终止。
 
 ### 5.17 2FA
 
@@ -2218,7 +2235,7 @@ body.params.token
 
 ### 9.3 私有站点限制
 
-启用私有站点后，匿名访客仅能调用：
+在 RPC2 Dispatcher 内部，私有站点白名单允许匿名调用：
 
 ```text
 public:getMe
@@ -2226,7 +2243,7 @@ public:getPublicSettings
 public:getVersion
 ```
 
-持有有效 `temp_key` 的匿名访客可继续调用 `public:*` 方法。
+持有有效 `temp_key` 的匿名访客可继续调用 `public:*` 方法。但通过 HTTP/WS 访问 `/api/rpc2` 时，请求会先经过全局 `PrivateSiteMiddleware`，因此匿名访客仍需携带有效 `temp_key` Cookie 或先完成登录。
 
 ### 9.4 敏感操作
 
@@ -2234,7 +2251,10 @@ public:getVersion
 
 ```text
 admin:exec
+admin:getAgentStartupConfig
 ```
+
+`admin:getAgentStartupConfig` 需要 Komari `1.6.0` 及以上版本。该方法返回 Agent 的完整启动参数（含凭据），因此按敏感操作处理。
 
 管理员调用时还需要有效 2FA code。API Key 调用和未启用 2FA 的管理员账号不需要额外 code。
 
@@ -2988,31 +3008,29 @@ Admin 方法仅管理员可调用。下列示例均可通过 `/api/rpc2`、sessi
 
 ### 14.5 通知
 
-| 方法                               | 参数                                                     | 返回                    |
-| ---------------------------------- | -------------------------------------------------------- | ----------------------- |
-| `admin:addLoadNotification`        | `{ clients, metric, threshold, ratio, interval, name? }` | `{ task_id }`           |
-| `admin:deleteLoadNotification`     | `{ id: number[] }`                                       | `null`                  |
-| `admin:editLoadNotification`       | `{ notifications: LoadNotification[] }`                  | `null`                  |
-| `admin:getAllLoadNotifications`    | -                                                        | `LoadNotification[]`    |
-| `admin:listOfflineNotifications`   | -                                                        | `OfflineNotification[]` |
-| `admin:editOfflineNotification`    | `OfflineNotification[]`                                  | `null`                  |
-| `admin:enableOfflineNotification`  | `string[]`                                               | `null`                  |
-| `admin:disableOfflineNotification` | `string[]`                                               | `null`                  |
-| `admin:sendNotification`           | `{ event: EventMessage }`                                | `null`                  |
+| 方法                                       | 参数                      | 返回                            |
+| ------------------------------------------ | ------------------------- | ------------------------------- |
+| `admin:listNotificationChannels`           | -                         | `NotificationChannelInfo[]`     |
+| `admin:getNotificationChannelConfiguration`| `{ id }`                  | `{ configuration, data }`       |
+| `admin:setNotificationChannelConfiguration`| `{ id, data }`            | `null`                          |
+| `admin:listOfflineNotifications`           | -                         | `OfflineNotification[]`         |
+| `admin:editOfflineNotification`            | `OfflineNotification[]`   | `null`                          |
+| `admin:enableOfflineNotification`          | `string[]`                | `null`                          |
+| `admin:disableOfflineNotification`         | `string[]`                | `null`                          |
+| `admin:sendNotification`                   | `{ event: EventMessage }` | `null`                          |
 
-新增负载通知：
+保存通知渠道配置：
 
 ```json
 {
   "jsonrpc": "2.0",
-  "method": "admin:addLoadNotification",
+  "method": "admin:setNotificationChannelConfiguration",
   "params": {
-    "name": "CPU high",
-    "clients": ["d4c8d9a1-4ec5-4c1b-9b95-4c1c8f930b0d"],
-    "metric": "cpu",
-    "threshold": 90,
-    "ratio": 0.8,
-    "interval": 15
+    "id": "webhook",
+    "data": {
+      "url": "https://example.com/hook",
+      "method": "POST"
+    }
   },
   "id": 1
 }
@@ -3039,20 +3057,18 @@ Admin 方法仅管理员可调用。下列示例均可通过 `/api/rpc2`、sessi
 
 ### 14.6 Provider
 
-| 方法                             | 参数                 | 返回                    |
-| -------------------------------- | -------------------- | ----------------------- |
-| `admin:getMessageSenderProvider` | `{ provider? }`      | Provider 配置或模板列表 |
-| `admin:setMessageSenderProvider` | `{ name, addition }` | `{ message }`           |
-| `admin:getOidcProvider`          | `{ provider? }`      | Provider 配置或模板列表 |
-| `admin:setOidcProvider`          | `{ name, addition }` | `{ message }`           |
+| 方法                    | 参数                 | 返回                    |
+| ----------------------- | -------------------- | ----------------------- |
+| `admin:getOidcProvider` | `{ provider? }`      | Provider 配置或模板列表 |
+| `admin:setOidcProvider` | `{ name, addition }` | `{ message }`           |
 
 ```json
 {
   "jsonrpc": "2.0",
-  "method": "admin:setMessageSenderProvider",
+  "method": "admin:setOidcProvider",
   "params": {
-    "name": "telegram",
-    "addition": "{\"bot_token\":\"...\",\"chat_id\":\"...\"}"
+    "name": "github",
+    "addition": "{\"client_id\":\"...\",\"client_secret\":\"...\"}"
   },
   "id": 1
 }
@@ -3101,11 +3117,14 @@ Admin 方法仅管理员可调用。下列示例均可通过 `/api/rpc2`、sessi
 
 ### 14.8 系统与诊断
 
-| 方法                    | 参数                           | 返回              |
-| ----------------------- | ------------------------------ | ----------------- |
-| `admin:getLogs`         | `{ limit?, page?, msg_type? }` | `{ logs, total }` |
-| `admin:testSendMessage` | -                              | `null`            |
-| `admin:testGeoip`       | `{ ip? }`                      | GeoIP 记录        |
+| 方法                    | 参数                                        | 返回                       |
+| ----------------------- | ------------------------------------------- | -------------------------- |
+| `admin:getLogs`         | `{ limit?, page?, msg_type?, q? }`          | `{ logs, total }`          |
+| `admin:testSendMessage` | -                                           | `null`                     |
+| `admin:testGeoip`       | `{ ip? }`                                   | GeoIP 记录                 |
+| `admin:getLastRunVersion`| -                                          | `{ last_run_version }`     |
+
+`q` 参数需要 Komari `1.6.2` 及以上版本；更早版本只接受 `limit`、`page` 和 `msg_type`。
 
 ```json
 {
@@ -3115,6 +3134,20 @@ Admin 方法仅管理员可调用。下列示例均可通过 `/api/rpc2`、sessi
     "limit": "20",
     "page": "1",
     "msg_type": "login"
+  },
+  "id": 1
+}
+```
+
+关键词搜索（匹配消息内容、IP 或 UUID）：
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "admin:getLogs",
+  "params": {
+    "limit": "20",
+    "q": "Tokyo-01"
   },
   "id": 1
 }
@@ -3173,7 +3206,7 @@ Admin 方法仅管理员可调用。下列示例均可通过 `/api/rpc2`、sessi
 节点文件功能采用控制面与数据面分离：
 
 - 目录、属性和修改操作通过本节 RPC 提供。
-- 文件内容上传与下载通过 HTTP 流接口提供，见 [HTTP 节点文件管理](#_5-16-节点文件管理)。
+- 文件内容上传与下载通过 HTTP 流接口提供，见 [HTTP 节点文件管理](#_5-15-节点文件管理)。
 - 所有 RPC 都要求管理员身份，并要求目标 Agent 在线且支持文件操作。
 
 #### 14.11.1 操作一览
@@ -3387,13 +3420,150 @@ Admin 方法仅管理员可调用。下列示例均可通过 `/api/rpc2`、sessi
 | `DeadlineExceeded` | Agent 操作超时                         |
 | `Cancelled`        | 调用取消                               |
 
-文件内容上传、下载与预览令牌使用 HTTP 接口，见 [HTTP 节点文件管理](#_5-16-节点文件管理)。
+文件内容上传、下载与预览令牌使用 HTTP 接口，见 [HTTP 节点文件管理](#_5-15-节点文件管理)。
+
+### 14.12 终端会话恢复
+
+用于列出和清理浏览器侧已断开、但服务端仍在 5 分钟保留期内的终端会话。会话本身的建立与重连见 [节点终端](#_5-16-节点终端)。
+
+这两个方法需要 Komari `1.6.2` 及以上版本。
+
+#### `admin:listRecoverableTerminalSessions`
+
+**参数：**
+
+| 字段   | 类型     | 必填 | 说明                 |
+| ------ | -------- | ---- | -------------------- |
+| `uuid` | `string` | 否   | 按节点 UUID 过滤     |
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "admin:listRecoverableTerminalSessions",
+  "id": 1
+}
+```
+
+**返回：** `RecoverableSession[]`。
+
+| 字段              | 类型      | 说明                                       |
+| ----------------- | --------- | ------------------------------------------ |
+| `request_id`      | `string`  | 可用于重连的会话 ID                        |
+| `uuid`            | `string`  | 终端目标节点                               |
+| `agent_connected` | `boolean` | Agent 是否仍保持连接；`false` 表示等待回连 |
+
+```json
+[
+  {
+    "request_id": "0e9f95c9f7f34b27a0ec85a818fec2b3",
+    "uuid": "d4c8d9a1-4ec5-4c1b-9b95-4c1c8f930b0d",
+    "agent_connected": true
+  }
+]
+```
+
+只返回调用者有权接管的会话：普通管理员仅能看到自己创建的会话，API Key 可看到匹配 `uuid` 的全部会话。
+
+#### `admin:terminateTerminalSessions`
+
+**参数：**
+
+| 字段          | 类型       | 必填 | 说明               |
+| ------------- | ---------- | ---- | ------------------ |
+| `request_ids` | `string[]` | 否   | 要终止的会话 ID 列表 |
+| `request_id`  | `string`   | 否   | 要终止的单个会话 ID |
+
+`request_ids` 与 `request_id` 至少提供一个，两者可同时使用。
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "admin:terminateTerminalSessions",
+  "params": {
+    "request_ids": ["0e9f95c9f7f34b27a0ec85a818fec2b3"]
+  },
+  "id": 1
+}
+```
+
+**返回：** `{ terminated: string[] }`，仅包含实际被终止的会话 ID。
+
+终止是不可恢复的：服务端会向仍然在线的 Agent 发送 `terminate` 并关闭连接，该 `request_id` 立即失效，后续重连返回 `404`。
+
+### 14.13 Agent 配置与版本
+
+对应 Agent v2 协议中的 `agent.startupConfig` 与 `agent.switchVersion`，协议细节见 [服务端下发事件](#_15-3-服务端下发事件)。
+
+这两个 RPC 自 Komari `1.6.0` 起提供，但要求 Agent `1.6.20` 及以上版本才有实际效果。更早的 Agent 会忽略这两个事件，调用方会收到 `Unavailable` 或超时错误。
+
+#### `admin:getAgentStartupConfig`
+
+**参数：**
+
+| 字段   | 类型     | 必填 | 说明       |
+| ------ | -------- | ---- | ---------- |
+| `uuid` | `string` | 是   | Agent UUID |
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "admin:getAgentStartupConfig",
+  "params": {
+    "uuid": "d4c8d9a1-4ec5-4c1b-9b95-4c1c8f930b0d"
+  },
+  "id": 1
+}
+```
+
+**返回：** 扁平对象，为 Agent 当前进程全部生效的启动参数，**包含凭据且不脱敏**。
+
+该方法是敏感操作，会记录审计日志。服务端等待上限为 20 秒。
+
+| Code               | 场景                         |
+| ------------------ | ---------------------------- |
+| `InvalidParams`    | `uuid` 缺失                  |
+| `Unavailable`      | Agent 离线                   |
+| `DeadlineExceeded` | Agent 未在 20 秒内回传配置   |
+| `InternalError`    | Agent 回传错误或配置为空     |
+
+#### `admin:switchAgentVersion`
+
+**参数：**
+
+| 字段      | 类型     | 必填 | 说明                                                          |
+| --------- | -------- | ---- | ------------------------------------------------------------- |
+| `uuid`    | `string` | 是   | Agent UUID                                                    |
+| `version` | `string` | 是   | `latest`、版本线（如 `1.6.*`）、精确版本、`snapshot` 或快照标签 |
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "admin:switchAgentVersion",
+  "params": {
+    "uuid": "d4c8d9a1-4ec5-4c1b-9b95-4c1c8f930b0d",
+    "version": "1.6.*"
+  },
+  "id": 1
+}
+```
+
+**返回：** `{ queued: true }`。
+
+这是**单向下发**，只表示事件已投递，不代表安装成功。确认是否生效需查看该节点后续上报的 `version`。Agent 安装成功后自行重启；容器环境会跳过自更新。
+
+| Code            | 场景                             |
+| --------------- | -------------------------------- |
+| `InvalidParams` | `uuid` 或 `version` 缺失         |
+| `Unavailable`   | Agent 离线，或事件投递失败       |
+| `InternalError` | Agent 不支持 v2 版本切换         |
 
 ## 15. Agent v2 RPC
 
 Agent v2 使用 `POST /api/clients/v2/rpc` 或 `GET /api/clients/v2/rpc` WebSocket。其 JSON-RPC 包络与 `/api/rpc2` 相同，但方法属于 Agent 协议，不是 `admin:*` 或 `public:*` ACL 命名空间。
 
-> 行为基线：`komari-monitor/komari-agent` `1.5.10`，提交 `9e532e0429cd049571e35cf344654181879b33c7`。
+> 行为基线：`komari-monitor/komari-agent` `1.6.20`，提交 `efe34d5dcb1ce831cffb2b534b9385d1768fbb1f`。
+>
+> 仍需兼容 `1.5.10`：该版本缺少 `agent.startupConfig`、`agent.switchVersion` 与终端控制帧，见各小节标注。
 
 ### 15.1 传输模式
 
@@ -3415,17 +3585,21 @@ WebSocket 建立失败并达到最大重试次数后，Agent 进入 POST fallbac
 - 并行运行 `agent.pull` 长轮询，在 HTTP 下最长等待 25 秒。
 - `agent.report` 和 `agent.pull` 都有 `Content-Encoding: gzip`，除非 Agent 使用 `--disable-compression`。
 - 网络测试事件在 Agent `1.5.10` 中未实现。
+- `agent.pull` 的 `capabilities` 中，Agent `1.6.20` 起额外声明 `startup_config` 与 `switch_version`。
 
 ### 15.2 Agent 主动上报
 
-| 方法                | 参数                                                | 成功返回                               |
-| ------------------- | --------------------------------------------------- | -------------------------------------- |
-| `agent.report`      | `{ report, ack_event_ids? }`                        | `{ status:"success", events:Event[] }` |
-| `agent.basicInfo`   | `{ info }`                                          | `{ status:"success" }`                 |
-| `agent.pingResult`  | `{ task_id, ping_type, value, finished_at }`        | `{ status:"success" }`                 |
-| `agent.taskResult`  | `{ task_id, result, exit_code, finished_at }`       | `{ status:"success" }`                 |
-| `agent.pull`        | `{ capabilities?, ack_event_ids?, last_event_id? }` | `{ events:Event[] }`                   |
-| `agent.file.result` | `FileResult`                                        | `{ status:"success" }`                 |
+| 方法                        | 参数                                                | 成功返回                               |
+| --------------------------- | --------------------------------------------------- | -------------------------------------- |
+| `agent.report`              | `{ report, ack_event_ids? }`                        | `{ status:"success", events:Event[] }` |
+| `agent.basicInfo`           | `{ info }`                                          | `{ status:"success" }`                 |
+| `agent.pingResult`          | `{ task_id, ping_type, value, finished_at }`        | `{ status:"success" }`                 |
+| `agent.taskResult`          | `{ task_id, result, exit_code, finished_at }`       | `{ status:"success" }`                 |
+| `agent.pull`                | `{ capabilities?, ack_event_ids?, last_event_id? }` | `{ events:Event[] }`                   |
+| `agent.file.result`         | `FileResult`                                        | `{ status:"success" }`                 |
+| `agent.startupConfig.result`| `{ request_id, config?, error? }`                   | `{ status:"success" }`                 |
+
+`agent.startupConfig.result` 需要 Agent `1.6.20` 及以上版本。
 
 WebSocket 下 Agent 的 `agent.report`、`agent.basicInfo`、`agent.pingResult` 和 `agent.taskResult` 通常是无 `id` 的 notification；HTTP POST 模式下则可能带 `id` 并等待 JSON-RPC 响应。
 
@@ -3591,7 +3765,10 @@ HTTP fallback 下由 Agent 发起：
   "jsonrpc": "2.0",
   "method": "agent.pull",
   "params": {
-    "capabilities": ["exec", "ping", "message", "event", "terminal", "file"],
+    "capabilities": [
+      "exec", "ping", "message", "event",
+      "terminal", "file", "startup_config", "switch_version"
+    ],
     "ack_event_ids": []
   },
   "id": "pull-1789547400123456789"
@@ -3630,9 +3807,13 @@ Server 下发的普通通知通常不带 `id`；需要结果的事件由 Agent �
 | `agent.ping`             | `{ ping_task_id, ping_type, ping_target }` | 执行 `icmp`、`tcp` 或 `http` 探测                   | `agent.pingResult`    |
 | `agent.terminal.request` | `{ request_id }`                           | 连接 `/api/clients/terminal?...&id=<request_id>`    | 通过终端 WebSocket 流 |
 | `agent.file`             | `{ uuid, request_id, op, args? }`          | 执行文件控制操作                                    | `agent.file.result`   |
+| `agent.startupConfig`    | `{ request_id }`                           | 回传本进程的全部生效启动参数                        | `agent.startupConfig.result` |
+| `agent.switchVersion`    | `{ version }`                              | 下载并替换二进制，随后重启进程                      | 无                    |
 | `agent.message`          | `{ type, message, data? }`                 | 记录日志，不产生 RPC 回包                           | 无                    |
 | `agent.event`            | `{ type, data? }`                          | 记录日志，不产生 RPC 回包                           | 无                    |
 | `networkTest.*`          | 见协议定义                                 | Agent `1.5.10` 未实现                               | 无                    |
+
+`agent.startupConfig` 与 `agent.switchVersion` 需要 Agent `1.6.20` 及以上版本；`1.5.10` 收到这两个方法时会记录 `unknown v2 event method` 并忽略。
 
 #### `agent.exec`
 
@@ -3680,6 +3861,80 @@ Ping 类型行为：
   }
 }
 ```
+
+#### `agent.startupConfig`
+
+需要 Agent `1.6.20` 及以上版本。
+
+Server 请求 Agent 回传当前进程全部生效的启动参数。Agent 以新事件 `agent.startupConfig.result` 回复，`request_id` 原样带回。
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "agent.startupConfig",
+  "params": {
+    "request_id": "cfg-1789547400123456789"
+  }
+}
+```
+
+Agent 的回包：
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "agent.startupConfig.result",
+  "params": {
+    "request_id": "cfg-1789547400123456789",
+    "config": {
+      "endpoint": "https://monitor.example.com",
+      "token": "<client-token>",
+      "interval": 1.5,
+      "disable_web_ssh": false
+    }
+  }
+}
+```
+
+- `config` 为扁平对象，包含默认值与凭据，**不做脱敏**。
+- Agent 无法提供配置时回传 `error` 字符串，此时不返回 `config`。
+- Server 侧等待上限为 20 秒，超时或 Agent 回传 `error` 时统一返回失败，不回显 Agent 的原始文本，避免泄露凭据。
+- 对应的管理员 RPC 为 `admin:getAgentStartupConfig`，该方法已标记为敏感操作。
+
+#### `agent.switchVersion`
+
+需要 Agent `1.6.20` 及以上版本。
+
+Server 请求 Agent 切换到指定的版本目标。Agent 复用自身的升级链路完成下载、校验与替换，成功后重启进程生效。
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "agent.switchVersion",
+  "params": {
+    "version": "1.6.*"
+  }
+}
+```
+
+`version` 的取值：
+
+| 取值                       | 含义                                     |
+| -------------------------- | ---------------------------------------- |
+| `latest` 或 `*`            | 最新稳定版                               |
+| `1.6.*` 或 `1.6`           | 指定版本线的最新稳定版                   |
+| `1.6.20`                   | 精确版本；可升可降                       |
+| `snapshot`                 | 最新快照版                               |
+| `Snapshot-2611190200`      | 指定的快照版本                           |
+
+行为说明：
+
+- 本方法无回包。服务端返回 `{ queued: true }` 只表示事件已投递，不代表安装成功；确认结果需观察 Agent 后续上报的 `version`。
+- 下载内容按 GitHub Releases API 返回的 SHA-256 `digest` 校验，并拒绝大于 128 MiB 的产物。
+- 安装成功后 Agent 以退出码 `42` 退出，由 systemd、nssm 等托管方式拉起新版本。
+- 运行在容器中的 Agent 会跳过二进制自更新，仅记录日志，需更换镜像。
+- Agent 启动时若带了 `--disable-web-ssh`，该请求会被忽略。
+- 对应的管理员 RPC 为 `admin:switchAgentVersion`，要求 Agent 在线且支持 v2 协议。
 
 ### 15.4 Agent 文件控制面
 
@@ -3848,20 +4103,14 @@ POST /api/clients/transfer/:id?token=<client-token>&transfer_token=<transfer-tok
 
 Agent 连接终端 WebSocket 后，浏览器与 Agent 之间的数据帧如下。
 
-浏览器发送二进制帧：
+终端协议自 Komari `1.6.2` / Agent `1.6.20` 起改为按帧类型分流：
 
-```text
-直接写入 PTY
-```
+- **二进制帧**：终端内容（PTY 输入输出），双向原样转发，从不解析。
+- **文本帧**：控制消息，即下列 JSON。
 
-浏览器发送 JSON 控制帧：
+控制消息不会写入终端缓冲区；非 JSON 文本帧按终端内容处理。两端都必须忽略不认识的 `type`，因此新增消息类型不需要兼容代码。旧版 Agent 会把 `input`、`close` 当作控制帧，新协议仍接受这两个别名。
 
-```json
-{
-  "type": "input",
-  "input": "uptime\n"
-}
-```
+浏览器 → 服务端：
 
 ```json
 {
@@ -3873,15 +4122,52 @@ Agent 连接终端 WebSocket 后，浏览器与 Agent 之间的数据帧如下�
 
 ```json
 {
-  "type": "heartbeat"
+  "type": "heartbeat",
+  "id": "hb-1"
 }
 ```
 
 ```json
 {
-  "type": "close"
+  "type": "terminate"
 }
 ```
+
+服务端 → 浏览器：
+
+```json
+{
+  "type": "assigned",
+  "request_id": "0e9f95c9f7f34b27a0ec85a818fec2b3"
+}
+```
+
+```json
+{
+  "type": "ready"
+}
+```
+
+```json
+{
+  "type": "abort"
+}
+```
+
+服务端 → Agent：`resize`、`heartbeat`、`abort`、`terminate`。
+
+Agent → 服务端：`heartbeat`（带 `id` 时原样回显，用于端到端 RTT）、`terminate`（PTY 结束，如用户 `exit`）。
+
+消息语义：
+
+| 消息        | 方向             | 含义                                                     |
+| ----------- | ---------------- | -------------------------------------------------------- |
+| `assigned`  | 服务端 → 浏览器  | 会话已分配，回传 `request_id`，此后可断线重连            |
+| `ready`     | 服务端 → 浏览器  | 对端已就位，转发开始                                     |
+| `abort`     | 服务端 → 存活方  | 对端意外断开，会话进入保留期，等待重连                   |
+| `terminate` | 任意方向         | 会话终态，立即关闭且不再重连                             |
+| `heartbeat` | 双向             | 保活；Agent 带 `id` 回显时可用于 RTT 测量                |
+| `resize`    | 浏览器 → Agent   | 调整 PTY 窗口尺寸                                        |
 
 Agent 返回终端输出时统一使用 WebSocket 二进制帧，不包装为 JSON。
 
@@ -3891,7 +4177,9 @@ Agent 返回终端输出时统一使用 WebSocket 二进制帧，不包装为 JS
 - Agent 重连同一 `request_id` 时重附着原 PTY，并关闭旧连接。
 - 浏览器侧断开后也会保留同一 `request_id` 5 分钟。
 - 浏览器恢复时先重连，Server 重新下发 `agent.terminal.request`，之后 Agent 才重连终端 WebSocket。
-- `heartbeat` 只用于保活，不写入终端；`close` 会触发会话关闭和 PTY 清理。
+- `heartbeat` 只用于保活，不写入终端；`terminate` 会触发会话关闭和 PTY 清理。
+
+Agent `1.5.10` 与 `1.5.11` 同样会保留 PTY 5 分钟并支持重附着，但不识别 `abort`、`assigned`、`ready`，也不会主动发送 `heartbeat`。与这类 Agent 通信时，断线恢复完全依赖服务端重新下发 `agent.terminal.request`，浏览器侧不会收到来自 Agent 的保活信号。
 
 ### 15.7 网络测试支持状态
 
